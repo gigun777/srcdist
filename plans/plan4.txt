@@ -1,0 +1,190 @@
+A) Debug Center і контрольні точки
+Етап A0 — Boot marker + runtime entries
+
+Статус: ✅ зроблено
+Мета: довести, що dist реально завантажився і старт відбувся.
+Перевірка: Boot OK + Count dist assets.
+
+Етап A1 — Debug Center UI + кнопка 🧪
+
+Статус: ✅ зроблено
+Перевірка: відкривається Debug Center.
+
+Етап A2 — Module Health Report (включно storage)
+
+Статус: ✅ зроблено
+Перевірка: health-рядки + storage smoke-test get/set/del.
+
+Етап A3 — ZIP v2 inspect journals
+
+Статус: ✅ зроблено
+Мета: бачити факт “що в ZIP всередині”.
+Перевірка: inspect показує journalsCount + rows + cols + template + path.
+
+Етап A4 — ZIP store self-test
+
+Статус: ✅ зроблено
+Мета: тест ZIP-читалки/писалки як окремого модуля.
+Перевірка: entries:2 імена manifest/journals.
+
+B) Предметні фічі поза бекупом
+Етап B0 — Нумерація по дереву як core (numbering_core)
+
+Статус: ✅ зроблено
+Перевірка: QuickNav показує 1, 1.1, 2.1.1.
+
+Етап B1 — meta.path у ZIP v2 через tree-numbering
+
+Статус: ✅ зроблено
+Перевірка: Inspect ZIP journals → path s1.1.../j2.1.1...
+
+Етап B2 — Стабільна нумерація (createdAt order)
+
+Статус: ✅ зроблено
+Перевірка: старі елементи не перенумеровуються при додаванні нового.
+
+Етап B3 — Welcome seed + one-time cleanup
+
+Статус: ✅ зроблено (з уточненням логіки при створенні журналу)
+Перевірка: після першої user-дії (space або journal) seed прибирається коректно.
+
+C) Backup ZIP v2 (головне) — привести до “правильної архітектури”
+C0: Експорт/імпорт як ядро + dry-run
+Етап C0.1 — export_core dry-run (manifest plan)
+
+Статус: ✅ зроблено (але інтеграція з UI ще не повна)
+Перевірка: Debug export dry-run дає manifest + counts.
+
+Етап C0.2 — import_core dry-run (manifest check)
+
+Статус: ✅ зроблено
+Перевірка: dry-run ok/missingFiles.
+
+Етап C0.3 — ZIP utils як один модуль (без дублювання)
+
+Статус: ✅ зроблено
+Перевірка: ZIP self-test.
+
+C1: “Дані таблиць” — one source of truth
+Етап C1.1 — export ZIP v2 бере journals зі state, не з navigation payload
+
+Статус: ✅ зроблено
+Перевірка: Inspect ZIP journals → journalsCount > 0
+
+Етап C1.2 — експорт datasets бере з tableStore (не з індексів)
+
+Статус: ✅ зроблено (після виправлення навігації сенс зʼявився)
+Перевірка: Inspect ZIP journals → rows > 0 для журналів з даними
+
+Етап C1.3 — імпорт ZIP v2 гарантовано застосовує datasets у tableStore
+
+Статус: ✅ зроблено
+Перевірка: після reset → import → дані в журналах є
+
+C2: Привести імпорт до “правильного пайплайну” (зараз тут найбільший борг)
+
+Нижче — те, що ще не зроблено, але треба для стабільності/передбачуваності.
+
+Етап C2.1 — Уніфікований Import Pipeline “dry-run → confirm → wipe → apply”
+
+Статус: ⏳ попереду
+Зміни:
+
+один виконуваний сценарій для mode=replace
+
+одна точка, де формується report (stages, warnings, actions)
+Перевірка (Debug Center):
+
+кнопка “Run full import pipeline (dry-run only)” показує стадії 1..N
+
+Етап C2.2 — Wipe (очистка) як окремий атомарний крок
+
+Статус: ⏳
+Зміни:
+
+чітко визначити що чистимо при replace:
+
+navigation/spaces/journals
+
+journal_templates
+
+transfer_templates
+
+tableStore datasets
+
+settings (які саме)
+Перевірка:
+
+Debug Center: “Wipe preview” (показує що буде очищено)
+
+“Wipe execute” (після підтвердження) → storage smoke-test показує порожньо
+
+Етап C2.3 — Apply: templates → settings → navigation → datasets (строгий порядок)
+
+Статус: ⏳
+Перевірка:
+
+Debug Center: “Apply stage results”
+
+templates imported ✅
+
+navigation imported ✅
+
+datasets imported ✅ (rows total)
+
+Етап C2.4 — Confirm UX (missing template / columns mismatch)
+
+Статус: ⏳
+Зміни:
+
+якщо template відсутній → confirm create
+
+якщо columns mismatch → confirm proceed/skip
+
+якщо path conflict → confirm merge/replace
+Перевірка:
+
+Debug Center: “Simulate mismatch” (підкласти JSON)
+
+Етап C2.5 — Import ZIP v2 без manifest (bulk journals zip)
+
+Статус: ⏳ (ти це планував як майбутню фічу)
+На зараз: поки що лише правильна помилка “manifest missing”.
+Перевірка: в Debug Center видно “manifest missing” і список journal JSON, які знайдені.
+
+C3: Вимкнення legacy ZIP v1
+Етап C3.1 — Заборонити v1 import, показати коректну помилку
+
+Статус: ⏳
+Перевірка: старий zip → помилка “unsupported legacy v1”
+
+Етап C3.2 — Прибрати код пошуку backup.json
+
+Статус: ⏳
+Перевірка: немає гілок v1 у UI
+
+D) Build / src-dist (почнемо після того, як backup стане стабільний)
+
+Це велика зона ризику, тому лишається після стабілізації backup.
+
+Етап D0 — Відновити scripts/build.mjs
+
+Статус: ⏳
+
+Етап D1 — build_meta.json + показ у Debug Center
+
+Статус: ⏳
+
+Етап D2 — esbuild bundling ESM src→dist
+
+Статус: ⏳
+
+Етап D3 — dist policy + verify-dist
+
+Статус: ⏳
+
+Етап D4 — src єдине джерело правди (dist генерується)
+
+Статус: ⏳
+
+Поточний прогрес за оновленим планом

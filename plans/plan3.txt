@@ -1,0 +1,129 @@
+Етап 0 — Базова стабілізація контрольних точок
+Зміни:
+•	Додати в Debug Center кнопку “Show Runtime Entries” (показати список файлів, які реально завантажились з dist, через performance.getEntriesByType або лог з імпортів)
+•	Додати “Boot OK” маркер (після старту sdo)
+Перевірка в Debug Center:
+•	“Runtime dist entries found ✅”
+•	“sdo.start executed ✅”
+Результат: Архів + сайт стартує + Debug Center відкривається.
+________________________________________
+Етап 1 — Debug Center UI-скелет у SWS + кнопка біля налаштувань
+Зміни:
+•	Додати кнопку Debug поруч із кнопкою Settings у верхньому UI (або в панелі, де зараз settings)
+•	Реалізувати SWS screen: “Debug Center (v1)”
+Перевірка:
+•	натиснув → відкрився Debug Center
+Результат: Архів.
+________________________________________
+Етап 2 — Debug: “Module Health Report”
+Зміни:
+•	у Debug Center додати репорт:
+o	storage: init/list/get/set доступні
+o	window.sdo існує
+o	sdo.api.tableStore існує
+o	sdo.api.tableStore.exportTableData існує
+o	UI.modal / SettingsWindow доступні
+Перевірка:
+•	все показує статусами ✅/❌
+Результат: Архів.
+________________________________________
+Етап 3 — Backup v2: винести експорт у ядро (без build ще)
+Зміни:
+•	Створити src/backup_v2/backup_v2_export_core.js
+•	UI викликає export тільки через це ядро
+•	Debug Center додає тест “ZIP v2 export dry-run” (без скачування: сформувати структуру/manifest у пам’яті)
+Перевірка:
+•	Debug test показує: manifest created ✅, journals count ✅
+Результат: Архів.
+________________________________________
+Етап 4 — Backup v2: винести імпорт у ядро (dry-run тільки)
+Зміни:
+•	src/backup_v2/backup_v2_import_core.js
+•	зробити dry-run: читає zip → знаходить manifest → перевіряє файли існують
+•	UI кнопка Import показує помилки через IO report
+•	Debug Center: “Import dry-run from selected zip” (показує warnings)
+Перевірка:
+•	dry-run проходить для zip v2
+Результат: Архів.
+________________________________________
+Етап 5 — Backup v2: apply імпорт (без legacy importBackup)
+Зміни:
+•	імпорт робиться напряму:
+o	templates → settings → navigation → tableStore.importTableData
+•	replace: спершу dry-run, потім confirm, потім wipe, потім apply
+•	Debug Center додає “Import apply smoke test” (на маленькому тест-zip або на реальному з файлу)
+Перевірка:
+•	після імпорту видно статистику в IO report
+•	Debug Center показує tableStore counts
+Результат: Архів.
+________________________________________
+Етап 6 — Backup v2: контроль розбіжностей + confirm діалоги
+Зміни:
+•	якщо template відсутній → confirm “створити?”
+•	якщо columns mismatch → confirm “продовжити?”
+•	усі warnings зберігаються у report
+Перевірка:
+•	Debug Center має “Simulate mismatch” (можна підкласти json з mismatch)
+Результат: Архів.
+________________________________________
+Етап 7 — Вимкнути legacy backup v1 (без backward)
+Зміни:
+•	прибрати пошук backup.json
+•	прибрати importBackup usage
+•	Debug Center: “Assert legacy v1 disabled ✅”
+Перевірка:
+•	старий zip дає зрозумілу помилку (і це очікувано)
+Результат: Архів.
+________________________________________
+Далі — конфлікт src/dist (нормальний build)
+Етап 8 — Відновити build-скрипт, який вже задекларований
+Зміни:
+•	створити newversion/scripts/build.mjs (бо зараз його немає)
+•	build робить мінімум:
+o	очищає dist
+o	копіює статичні файли, які потрібні index.html (css, sws_v2 js)
+o	копіює dist як output з src (на цьому етапі можна “копіювально”, щоб просто не ламати)
+Перевірка (Debug Center):
+•	“Build metadata file exists ✅” (див. наступний етап)
+Результат: Архів.
+________________________________________
+Етап 9 — Build metadata + перевірка версій
+Зміни:
+•	build генерує dist/build_meta.json:
+o	createdAt
+o	git hash (якщо доступно)
+o	list of outputs
+•	Debug Center показує build_meta.json
+Перевірка:
+•	видно дату/час збірки, список файлів
+Результат: Архів.
+________________________________________
+Етап 10 — Реальний bundling ESM (esbuild) для entry src/index.js
+Зміни:
+•	додати esbuild в devDependencies (або локально, якщо вже є)
+•	build збирає ESM:
+o	entry: src/index.js (або src/app.js — визначимо по твоєму стартовому)
+o	output: dist/index.js (щоб index.html не змінювати одразу)
+•	на цьому етапі index.html може лишитись таким самим, але dist/index.js буде згенерований
+Перевірка:
+•	сайт стартує
+•	Debug Center показує build_meta + “bundle ok ✅”
+Результат: Архів.
+________________________________________
+Етап 11 — Заборона ручного редагування dist (контроль)
+Зміни:
+•	додати dist/ в .gitignore або навпаки: “dist генерується тільки build” (залежить як ти ведеш репо)
+•	додати скрипт “verify-dist” (порівнює build_meta timestamp, або перевіряє що dist відповідає build)
+Перевірка:
+•	Debug Center: “dist policy ✅”
+Результат: Архів.
+________________________________________
+Етап 12 — Прибрати дублювання src/dist у процесі розробки
+Зміни:
+•	всі правки тільки в src
+•	dist генерується build/watch
+•	прибрати імпорти, які напряму тягнуть src або специфічні dist-обхідні шляхи
+Перевірка:
+•	Debug Center: “No runtime imports from src ✅”
+•	сайт стартує
+Результат: Архів.

@@ -1,0 +1,23 @@
+{
+  "sws_core": [
+    "src/ui/sws_v2/sws_modal.js",
+    "src/ui/sws_v2/sws_quicknav.js"
+  ],
+  "bootstrap_order": [
+    "dist/ui/ui_bootstrap_esm.js imports theme.js, transfer_modals.js, ui_transfer_bridge.js, then legacy modules"
+  ],
+  "transfer": [
+    "src/ui/transfer_modals.js (defines window.TransferUI)",
+    "src/ui/ui_transfer_bridge.js (uses TransferUI + TransferCore)",
+    "src/core/transfer_core.js"
+  ],
+  "table_renderer": [
+    "src/modules/table_renderer.js (calls UI.transfer/openRowModal and opens row context UI.modal)"
+  ],
+  "settings": [
+    "src/ui/settings/settings_init.js -> SettingsWindow.push screens -> features_*"
+  ],
+  "debug": [
+    "src/ui/ui_debug_center.js (SWS screen, tests)"
+  ]
+}
