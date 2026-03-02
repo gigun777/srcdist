@@ -11,10 +11,6 @@ import { resolveImportConfirmsV2, mergeSimulatedIssues } from '../backup_v2/back
 
 export function openDebugCenter(){
   const SW = window.SettingsWindow;
-  if(!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function'){
-    try{ window.UI?.toast?.show?.('Debug Center недоступний (SettingsWindow не ініціалізовано)', { type:'warning' }); }catch(_){ /* ignore */ }
-    return;
-  }
 
   const buildScreen = ()=> ({
     title: 'Debug Center',
@@ -572,6 +568,25 @@ const runInspectZip = async ()=>{
     onSave: ()=>{},
     onClose: ()=>{}
   });
+
+  const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+  if (adapter && typeof adapter.open === 'function') {
+    const res = adapter.open({
+      screenId: 'debug.center',
+      swsOpen: (sw) => {
+        if (typeof sw.openCustomRoot !== 'function' || typeof sw.push !== 'function') {
+          throw new Error('SettingsWindow custom root API is unavailable');
+        }
+        sw.openCustomRoot(() => sw.push(buildScreen()));
+      }
+    });
+    if (res?.ok) return;
+  }
+
+  if(!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function'){
+    try{ window.UI?.toast?.show?.('Debug Center недоступний (SettingsWindow не ініціалізовано)', { type:'warning' }); }catch(_){ /* ignore */ }
+    return;
+  }
 
   SW.openCustomRoot(()=> SW.push(buildScreen()));
 }

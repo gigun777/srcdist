@@ -41,6 +41,14 @@ async function syncAlternativeAArtifacts() {
     await fs.copyFile(srcAdapter, distAdapter);
   }
 
+
+  const srcDebugCenter = path.join(projectRoot, 'src/ui/ui_debug_center.js');
+  const distDebugCenter = path.join(projectRoot, 'dist/ui/ui_debug_center.js');
+  if (await pathExists(srcDebugCenter)) {
+    await fs.mkdir(path.dirname(distDebugCenter), { recursive: true });
+    await fs.copyFile(srcDebugCenter, distDebugCenter);
+  }
+
   const distBootstrap = path.join(projectRoot, 'dist/ui/ui_bootstrap_esm.js');
   if (!(await pathExists(distBootstrap))) return;
 

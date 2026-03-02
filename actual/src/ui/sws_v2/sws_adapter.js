@@ -21,9 +21,15 @@ export function createSwsAdapter(options = {}) {
     const preferred = getRoute(screenId);
     const sw = getSettingsWindow();
 
-    if (preferred === 'sws' && sw && typeof sw.push === 'function' && payload.sws) {
-      sw.push(payload.sws);
-      return { ok: true, channel: 'sws', screenId };
+    if (preferred === 'sws' && sw) {
+      if (typeof payload.swsOpen === 'function') {
+        payload.swsOpen(sw);
+        return { ok: true, channel: 'sws', screenId, mode: 'custom-root' };
+      }
+      if (typeof sw.push === 'function' && payload.sws) {
+        sw.push(payload.sws);
+        return { ok: true, channel: 'sws', screenId, mode: 'push' };
+      }
     }
 
     if (payload.legacy) {

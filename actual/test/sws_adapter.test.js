@@ -46,3 +46,28 @@ test('sws adapter returns structured error without channels', () => {
   assert.equal(result.channel, 'none');
   assert.match(result.error, /No available channel/);
 });
+
+
+test('sws adapter supports custom swsOpen flow for root screens', () => {
+  const calls = [];
+  const adapter = createSwsAdapter({
+    getSettingsWindow: () => ({
+      openCustomRoot: (fn) => { calls.push('openCustomRoot'); fn(); },
+      push: (payload) => calls.push(['push', payload])
+    }),
+    openLegacyModal: (payload) => calls.push(['legacy', payload])
+  });
+
+  const result = adapter.open({
+    screenId: 'debug.center',
+    swsOpen: (sw) => {
+      sw.openCustomRoot(() => sw.push({ title: 'Debug Center' }));
+    },
+    legacy: { title: 'Legacy Debug' }
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.channel, 'sws');
+  assert.equal(result.mode, 'custom-root');
+  assert.deepEqual(calls, ['openCustomRoot', ['push', { title: 'Debug Center' }]]);
+});
