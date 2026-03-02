@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>TreeNavigation — Empty Modal Demo</title>
+  <link rel="stylesheet" href="./modal.css"/>
+</head>
+<body>
+  <main class="page">
+    <h1>Empty Modal Demo</h1>
+    <p>Це демо містить <b>тільки</b> порожню модалку. Жодних елементів навігації всередині немає.</p>
+    <button id="openBtn" class="btn">Відкрити модалку</button>
+  </main>
+
+  <!-- Empty modal -->
+  <div id="modalRoot" class="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <header class="modal-header">
+        <div class="modal-title" id="modalTitle">Порожня модалка</div>
+        <button class="icon-btn" id="closeBtn" aria-label="Закрити">✕</button>
+      </header>
+
+      <!-- IMPORTANT: EMPTY BODY (no content) -->
+      <section class="modal-body" id="modalBody"></section>
+
+      <footer class="modal-footer">
+        <button class="btn ghost" id="cancelBtn">Закрити</button>
+      </footer>
+    </div>
+  </div>
+
+  <script type="module" src="./modal.js"></script>
+</body>
+</html>
