@@ -638,12 +638,42 @@ const runInspectZip = async ()=>{
         }
       };
 
+      const probeOpenBtn = ui.el('button','sws-btn', 'Probe open (current id)');
+      probeOpenBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.open !== 'function') throw new Error('adapter.open unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+
+          const res = ad.open({
+            screenId: id,
+            sws: {
+              title: `Adapter probe: ${id}`,
+              subtitle: 'Temporary probe screen',
+              canSave: ()=>false,
+              saveLabel: null,
+              content: (ctx)=>{
+                const box = ctx.ui.el('div','sws-card');
+                box.appendChild(ctx.ui.el('div','sws-card-title', 'Adapter probe'));
+                box.appendChild(ctx.ui.el('div','', `Opened via adapter for screenId: ${id}`));
+                return box;
+              }
+            }
+          });
+          showState({ action: 'probeOpen', id, result: res, ok: !!res?.ok });
+        }catch(err){
+          showState({ action: 'probeOpen', ok: false, error: err?.message || String(err) });
+        }
+      };
+
       adapterBtnRow.appendChild(setRouteBtn);
       adapterBtnRow.appendChild(getRouteBtn);
       adapterBtnRow.appendChild(clearRouteBtn);
       adapterBtnRow.appendChild(clearAllBtn);
       adapterBtnRow.appendChild(exportRoutesBtn);
       adapterBtnRow.appendChild(importRoutesBtn);
+      adapterBtnRow.appendChild(probeOpenBtn);
       adapterBtnRow.appendChild(healthBtn);
 
       adapterCard.appendChild(adapterInfo);
