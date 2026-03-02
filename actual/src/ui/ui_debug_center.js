@@ -57,6 +57,9 @@ export function openDebugCenter(){
       push('SettingsWindow available', !!window.SettingsWindow);
       push('UI.toast available', !!(window.UI?.toast?.show));
       push('UI.modal available', !!(window.UI?.modal?.open));
+      push('SWS adapter available (Alternative A)', !!(window.UI?.swsAdapter));
+      push('SWS adapter route API', typeof window.UI?.swsAdapter?.setRoute === 'function');
+      push('SWS adapter open API', typeof window.UI?.swsAdapter?.open === 'function');
       push('SWS ui primitives (ctx.ui.el) available', !!(ctx?.ui?.el));
 
       // SDO / API
