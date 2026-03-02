@@ -25,6 +25,21 @@ export function createSwsAdapter(options = {}) {
     routeByScreen.clear();
   }
 
+  function exportRoutes() {
+    return Object.fromEntries(routeByScreen.entries());
+  }
+
+  function importRoutes(routes, options = {}) {
+    const next = routes && typeof routes === 'object' ? routes : null;
+    if (!next) throw new Error('importRoutes requires plain object');
+    if (options.replace !== false) routeByScreen.clear();
+    for (const [screenId, route] of Object.entries(next)) {
+      if (!VALID_ROUTES.has(route)) throw new Error(`Unsupported route for ${screenId}: ${route}`);
+      routeByScreen.set(String(screenId), route);
+    }
+    return routeByScreen.size;
+  }
+
   function open(payload = {}) {
     const screenId = String(payload.screenId || 'unknown');
     const preferred = getRoute(screenId);
@@ -69,6 +84,8 @@ export function createSwsAdapter(options = {}) {
     getRoute,
     clearRoute,
     clearAllRoutes,
+    exportRoutes,
+    importRoutes,
     open,
     getHealth,
     getRoutesSnapshot: () => Object.fromEntries(routeByScreen.entries())

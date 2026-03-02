@@ -90,3 +90,24 @@ test('sws adapter can clear specific and all routes', () => {
   assert.deepEqual(adapter.getRoutesSnapshot(), {});
   assert.equal(adapter.getRoute('transfer.execute'), 'sws');
 });
+
+
+test('sws adapter exports and imports routes as JSON object', () => {
+  const adapter = createSwsAdapter({
+    getSettingsWindow: () => ({ push: () => {} }),
+    openLegacyModal: () => {}
+  });
+
+  adapter.setRoute('debug.center', 'legacy');
+  adapter.setRoute('transfer.execute', 'sws');
+
+  const snapshot = adapter.exportRoutes();
+  assert.deepEqual(snapshot, { 'debug.center': 'legacy', 'transfer.execute': 'sws' });
+
+  adapter.clearAllRoutes();
+  const importedCount = adapter.importRoutes({ 'debug.center': 'sws', 'backup.import': 'legacy' });
+
+  assert.equal(importedCount, 2);
+  assert.equal(adapter.getRoute('debug.center'), 'sws');
+  assert.equal(adapter.getRoute('backup.import'), 'legacy');
+});

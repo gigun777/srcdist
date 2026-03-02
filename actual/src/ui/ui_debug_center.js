@@ -516,6 +516,12 @@ const runInspectZip = async ()=>{
       adapterOut.style.maxHeight = '220px';
       adapterOut.style.overflow = 'auto';
 
+      const routesJson = document.createElement('textarea');
+      routesJson.placeholder = '{"debug.center":"sws"}';
+      routesJson.style.width = '100%';
+      routesJson.style.minHeight = '72px';
+      routesJson.style.marginBottom = '8px';
+
       const idInput = document.createElement('input');
       idInput.type = 'text';
       idInput.value = 'debug.center';
@@ -607,15 +613,43 @@ const runInspectZip = async ()=>{
         }
       };
 
+      const exportBtn = ui.el('button','sws-btn', 'Export routes JSON');
+      exportBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.exportRoutes !== 'function') throw new Error('adapter.exportRoutes unavailable');
+          routesJson.value = JSON.stringify(ad.exportRoutes(), null, 2);
+          showState({ action: 'exportRoutes', ok: true });
+        }catch(err){
+          showState({ action: 'exportRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const importBtn = ui.el('button','sws-btn', 'Import routes JSON');
+      importBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.importRoutes !== 'function') throw new Error('adapter.importRoutes unavailable');
+          const parsed = JSON.parse(String(routesJson.value || '{}'));
+          const count = ad.importRoutes(parsed, { replace: true });
+          showState({ action: 'importRoutes', ok: true, imported: count });
+        }catch(err){
+          showState({ action: 'importRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
       adapterBtnRow.appendChild(setRouteBtn);
       adapterBtnRow.appendChild(getRouteBtn);
       adapterBtnRow.appendChild(clearRouteBtn);
       adapterBtnRow.appendChild(clearAllBtn);
+      adapterBtnRow.appendChild(exportBtn);
+      adapterBtnRow.appendChild(importBtn);
       adapterBtnRow.appendChild(healthBtn);
 
       adapterCard.appendChild(adapterInfo);
       adapterCard.appendChild(idInput);
       adapterCard.appendChild(routeSelect);
+      adapterCard.appendChild(routesJson);
       adapterCard.appendChild(adapterBtnRow);
       adapterCard.appendChild(adapterOut);
       showState();
