@@ -11,10 +11,6 @@ import { resolveImportConfirmsV2, mergeSimulatedIssues } from '../backup_v2/back
 
 export function openDebugCenter(){
   const SW = window.SettingsWindow;
-  if(!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function'){
-    try{ window.UI?.toast?.show?.('Debug Center недоступний (SettingsWindow не ініціалізовано)', { type:'warning' }); }catch(_){ /* ignore */ }
-    return;
-  }
 
   const buildScreen = ()=> ({
     title: 'Debug Center',
@@ -57,6 +53,9 @@ export function openDebugCenter(){
       push('SettingsWindow available', !!window.SettingsWindow);
       push('UI.toast available', !!(window.UI?.toast?.show));
       push('UI.modal available', !!(window.UI?.modal?.open));
+      push('SWS adapter available (Alternative A)', !!(window.UI?.swsAdapter));
+      push('SWS adapter route API', typeof window.UI?.swsAdapter?.setRoute === 'function');
+      push('SWS adapter open API', typeof window.UI?.swsAdapter?.open === 'function');
       push('SWS ui primitives (ctx.ui.el) available', !!(ctx?.ui?.el));
 
       // SDO / API
@@ -508,6 +507,153 @@ const runInspectZip = async ()=>{
       zipCard.appendChild(zipBtn);
       zipCard.appendChild(zipPre);
 
+      // Alternative A adapter controls (manual migration ops)
+      const adapterCard = section('Alternative A adapter controls');
+      const adapterInfo = ui.el('div','', 'Set route per screen and inspect adapter health.');
+      adapterInfo.style.marginBottom = '6px';
+      const adapterOut = ui.el('pre','');
+      adapterOut.style.whiteSpace = 'pre-wrap';
+      adapterOut.style.maxHeight = '220px';
+      adapterOut.style.overflow = 'auto';
+
+      const routesJson = document.createElement('textarea');
+      routesJson.placeholder = '{"debug.center":"sws"}';
+      routesJson.style.width = '100%';
+      routesJson.style.minHeight = '72px';
+      routesJson.style.marginBottom = '8px';
+
+      const idInput = document.createElement('input');
+      idInput.type = 'text';
+      idInput.value = 'debug.center';
+      idInput.placeholder = 'screen id (e.g. debug.center)';
+      idInput.style.width = '100%';
+      idInput.style.marginBottom = '6px';
+
+      const routeSelect = document.createElement('select');
+      routeSelect.style.width = '100%';
+      routeSelect.style.marginBottom = '8px';
+      ['sws', 'legacy'].forEach((r)=>{
+        const opt = document.createElement('option');
+        opt.value = r;
+        opt.textContent = r;
+        routeSelect.appendChild(opt);
+      });
+
+      const adapterBtnRow = ui.el('div','');
+      adapterBtnRow.style.display = 'flex';
+      adapterBtnRow.style.gap = '8px';
+      adapterBtnRow.style.flexWrap = 'wrap';
+
+      const getAdapter = ()=> window.UI?.swsAdapter || window.SWSAdapter || null;
+
+      const showState = (extra = {})=>{
+        const ad = getAdapter();
+        adapterOut.textContent = JSON.stringify({
+          hasAdapter: !!ad,
+          health: ad?.getHealth?.() || null,
+          routes: ad?.getRoutesSnapshot?.() || null,
+          ...extra
+        }, null, 2);
+      };
+
+      const setRouteBtn = ui.el('button','sws-btn', 'Set route');
+      setRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.setRoute !== 'function') throw new Error('adapter.setRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          ad.setRoute(id, routeSelect.value);
+          showState({ action: 'setRoute', id, route: routeSelect.value, ok: true });
+        }catch(err){
+          showState({ action: 'setRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const getRouteBtn = ui.el('button','sws-btn', 'Get route');
+      getRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.getRoute !== 'function') throw new Error('adapter.getRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const route = ad.getRoute(id);
+          showState({ action: 'getRoute', id, route, ok: true });
+        }catch(err){
+          showState({ action: 'getRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const healthBtn = ui.el('button','sws-btn', 'Health + routes');
+      healthBtn.onclick = ()=>showState({ action: 'health' });
+
+      const clearRouteBtn = ui.el('button','sws-btn', 'Clear route');
+      clearRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.clearRoute !== 'function') throw new Error('adapter.clearRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const removed = ad.clearRoute(id);
+          showState({ action: 'clearRoute', id, removed, ok: true });
+        }catch(err){
+          showState({ action: 'clearRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const clearAllBtn = ui.el('button','sws-btn', 'Clear all routes');
+      clearAllBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.clearAllRoutes !== 'function') throw new Error('adapter.clearAllRoutes unavailable');
+          ad.clearAllRoutes();
+          showState({ action: 'clearAllRoutes', ok: true });
+        }catch(err){
+          showState({ action: 'clearAllRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const exportBtn = ui.el('button','sws-btn', 'Export routes JSON');
+      exportBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.exportRoutes !== 'function') throw new Error('adapter.exportRoutes unavailable');
+          routesJson.value = JSON.stringify(ad.exportRoutes(), null, 2);
+          showState({ action: 'exportRoutes', ok: true });
+        }catch(err){
+          showState({ action: 'exportRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const importBtn = ui.el('button','sws-btn', 'Import routes JSON');
+      importBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.importRoutes !== 'function') throw new Error('adapter.importRoutes unavailable');
+          const parsed = JSON.parse(String(routesJson.value || '{}'));
+          const count = ad.importRoutes(parsed, { replace: true });
+          showState({ action: 'importRoutes', ok: true, imported: count });
+        }catch(err){
+          showState({ action: 'importRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      adapterBtnRow.appendChild(setRouteBtn);
+      adapterBtnRow.appendChild(getRouteBtn);
+      adapterBtnRow.appendChild(clearRouteBtn);
+      adapterBtnRow.appendChild(clearAllBtn);
+      adapterBtnRow.appendChild(exportBtn);
+      adapterBtnRow.appendChild(importBtn);
+      adapterBtnRow.appendChild(healthBtn);
+
+      adapterCard.appendChild(adapterInfo);
+      adapterCard.appendChild(idInput);
+      adapterCard.appendChild(routeSelect);
+      adapterCard.appendChild(routesJson);
+      adapterCard.appendChild(adapterBtnRow);
+      adapterCard.appendChild(adapterOut);
+      showState();
+
       // Runtime loaded dist assets
       const assetsCard = section('Runtime loaded dist assets');
       const listWrap = ui.el('div','');
@@ -563,12 +709,32 @@ const runInspectZip = async ()=>{
       root.appendChild(wipeCard);
       root.appendChild(applyCard);
       root.appendChild(zipCard);
+      root.appendChild(adapterCard);
       root.appendChild(assetsCard);
       return root;
     },
     onSave: ()=>{},
     onClose: ()=>{}
   });
+
+  const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+  if (adapter && typeof adapter.open === 'function') {
+    const res = adapter.open({
+      screenId: 'debug.center',
+      swsOpen: (sw) => {
+        if (typeof sw.openCustomRoot !== 'function' || typeof sw.push !== 'function') {
+          throw new Error('SettingsWindow custom root API is unavailable');
+        }
+        sw.openCustomRoot(() => sw.push(buildScreen()));
+      }
+    });
+    if (res?.ok) return;
+  }
+
+  if(!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function'){
+    try{ window.UI?.toast?.show?.('Debug Center недоступний (SettingsWindow не ініціалізовано)', { type:'warning' }); }catch(_){ /* ignore */ }
+    return;
+  }
 
   SW.openCustomRoot(()=> SW.push(buildScreen()));
 }
