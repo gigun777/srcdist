@@ -1,0 +1,14 @@
+Step56 — Alternative A: probe open для поточного screen id
+
+Що зроблено:
+1) У `Alternative A adapter controls` (Debug Center) додано кнопку:
+   - `Probe open (current id)`
+
+2) Кнопка виконує:
+   - `adapter.open({ screenId, sws: probeScreenSpec })`
+   - відкриває тимчасовий SWS probe-screen з id поточного поля
+   - пише результат у JSON output (`channel/mode/ok/error`)
+
+Навіщо:
+- Це швидка ручна валідація того, що route для конкретного screen id реально застосовується в runtime.
+- Дозволяє перевіряти міграційний маршрут без втручання в бізнес-екрани.
