@@ -1,0 +1,25 @@
+Step48 — Етап D (низький ризик): D0 + D1 + D3 tooling
+
+Що реалізовано в actual:
+1) D0: Відновлено build-скрипт `actual/scripts/build.mjs`.
+   - Режим copy-safe: не чистить dist, не перебудовує runtime-бандли.
+   - Генерує `dist/build_meta.json` як контрольну точку збірки.
+
+2) D1: Додано метадані збірки.
+   - Поля: schemaVersion, stage, mode, createdAt, gitHash, outputsCount, outputs.
+
+3) D3: Додано перевірку політики dist.
+   - `actual/scripts/verify-dist.mjs` перевіряє наявність обов'язкових runtime-файлів.
+   - Валідує `dist/build_meta.json` і існування всіх файлів з outputs.
+
+4) package scripts:
+   - `build`: node scripts/build.mjs
+   - `verify:dist`: node scripts/verify-dist.mjs
+
+Чому це low-risk:
+- Немає ручного редагування runtime dist коду.
+- Немає Big-Bang bundling на цьому кроці.
+- Є відкатність: змінено лише інфраструктурні скрипти перевірки/метаданих.
+
+Наступний крок (D2 безпечний старт):
+- Додати окремий `build:esm:dryrun`, який збирає в тимчасовий каталог і порівнює verify-звіти без заміни бойового dist.

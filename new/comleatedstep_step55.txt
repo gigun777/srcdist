@@ -1,0 +1,16 @@
+Step55 — Hotfix: duplicate importBtn declaration in Debug Center
+
+Проблема:
+- У `ui_debug_center.js` були два різні `const importBtn` в одному scope,
+  що викликало runtime синтаксичну помилку:
+  `Identifier 'importBtn' has already been declared`.
+
+Виправлення:
+- Кнопки route JSON перейменовано на унікальні назви:
+  - `exportRoutesBtn`
+  - `importRoutesBtn`
+- Оновлено appendChild виклики для нових імен.
+
+Результат:
+- Помилка парсингу прибрана.
+- Debug Center відкривається без pageerror.
