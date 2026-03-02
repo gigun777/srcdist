@@ -507,6 +507,91 @@ const runInspectZip = async ()=>{
       zipCard.appendChild(zipBtn);
       zipCard.appendChild(zipPre);
 
+      // Alternative A adapter controls (manual migration ops)
+      const adapterCard = section('Alternative A adapter controls');
+      const adapterInfo = ui.el('div','', 'Set route per screen and inspect adapter health.');
+      adapterInfo.style.marginBottom = '6px';
+      const adapterOut = ui.el('pre','');
+      adapterOut.style.whiteSpace = 'pre-wrap';
+      adapterOut.style.maxHeight = '220px';
+      adapterOut.style.overflow = 'auto';
+
+      const idInput = document.createElement('input');
+      idInput.type = 'text';
+      idInput.value = 'debug.center';
+      idInput.placeholder = 'screen id (e.g. debug.center)';
+      idInput.style.width = '100%';
+      idInput.style.marginBottom = '6px';
+
+      const routeSelect = document.createElement('select');
+      routeSelect.style.width = '100%';
+      routeSelect.style.marginBottom = '8px';
+      ['sws', 'legacy'].forEach((r)=>{
+        const opt = document.createElement('option');
+        opt.value = r;
+        opt.textContent = r;
+        routeSelect.appendChild(opt);
+      });
+
+      const adapterBtnRow = ui.el('div','');
+      adapterBtnRow.style.display = 'flex';
+      adapterBtnRow.style.gap = '8px';
+      adapterBtnRow.style.flexWrap = 'wrap';
+
+      const getAdapter = ()=> window.UI?.swsAdapter || window.SWSAdapter || null;
+
+      const showState = (extra = {})=>{
+        const ad = getAdapter();
+        adapterOut.textContent = JSON.stringify({
+          hasAdapter: !!ad,
+          health: ad?.getHealth?.() || null,
+          routes: ad?.getRoutesSnapshot?.() || null,
+          ...extra
+        }, null, 2);
+      };
+
+      const setRouteBtn = ui.el('button','sws-btn', 'Set route');
+      setRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.setRoute !== 'function') throw new Error('adapter.setRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          ad.setRoute(id, routeSelect.value);
+          showState({ action: 'setRoute', id, route: routeSelect.value, ok: true });
+        }catch(err){
+          showState({ action: 'setRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const getRouteBtn = ui.el('button','sws-btn', 'Get route');
+      getRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.getRoute !== 'function') throw new Error('adapter.getRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const route = ad.getRoute(id);
+          showState({ action: 'getRoute', id, route, ok: true });
+        }catch(err){
+          showState({ action: 'getRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const healthBtn = ui.el('button','sws-btn', 'Health + routes');
+      healthBtn.onclick = ()=>showState({ action: 'health' });
+
+      adapterBtnRow.appendChild(setRouteBtn);
+      adapterBtnRow.appendChild(getRouteBtn);
+      adapterBtnRow.appendChild(healthBtn);
+
+      adapterCard.appendChild(adapterInfo);
+      adapterCard.appendChild(idInput);
+      adapterCard.appendChild(routeSelect);
+      adapterCard.appendChild(adapterBtnRow);
+      adapterCard.appendChild(adapterOut);
+      showState();
+
       // Runtime loaded dist assets
       const assetsCard = section('Runtime loaded dist assets');
       const listWrap = ui.el('div','');
@@ -562,6 +647,7 @@ const runInspectZip = async ()=>{
       root.appendChild(wipeCard);
       root.appendChild(applyCard);
       root.appendChild(zipCard);
+      root.appendChild(adapterCard);
       root.appendChild(assetsCard);
       return root;
     },
