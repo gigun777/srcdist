@@ -1,0 +1,386 @@
+Принципи міграції
+
+Еталон поведінки = step34. Будь-яка фіча в step45 має працювати так само, як у step34, перш ніж ми її “рефакторимо”.
+
+Один крок = одна зона ризику. Не чіпаємо паралельно Transfer + Row menu + Settings.
+
+Ніколи не ламаємо старе під час переносу. Поки нове не доведено — старий шлях лишається як fallback.
+
+SWS стає “ядром модалок” через Screen Specs, а не через розкидані SettingsWindow.push() у різних файлах.
+
+Стан SWS централізовано: який екран відкрито, які кнопки є, що dirty, яка клавіатура.
+
+Глобальна ціль
+
+Побудувати одне джерело “SWS modal ядра”, яке:
+
+керує стеком екранів і їхнім життєвим циклом
+
+керує кнопками (label/видимість/поведінка/disable)
+
+керує клавіатурою (Esc/Enter/Tab/фокус)
+
+дає API для будь-якого модуля: відкрий екран зі spec + контекстом + callbacks
+
+мінімізує дублювання модалок (UI.modal) і конфлікти listeners
+
+Фаза 0 — Інвентаризація і контрольна стабільність (до будь-яких змін)
+Крок 0.1 — “Каталог екранів” (паспорт кожного UI)
+
+Мета: щоб нічого не “забути”, і щоб кожен модуль мав опис.
+
+Зміни:
+
+створюємо docs/ui_catalog.md (в репо) зі списком:
+
+Transfer: templates screen, execute screen
+
+Row actions (“три строки”): add subrow, delete row/subrow, transfer row
+
+Settings: root + stacks (columns, templates, uxui…)
+
+Backup: export/import
+
+Debug Center
+
+AddRow (+додати)
+
+QuickNav
+
+Table edit/subrows behaviors
+
+Перевірка: у документі для кожного екрану є:
+
+“вхідні параметри”
+
+“вихід (що змінює)”
+
+“кнопки і клавіатура”
+
+“залежності (які модулі викликає)”
+
+Артефакт: тільки docs.
+
+Крок 0.2 — “UI smoke tests” в Debug Center (не автоматичні, а кнопки)
+
+Мета: мати 10–15 швидких ручних перевірок після кожного кроку.
+
+Зміни:
+
+в Debug Center додаємо секцію “UI Smoke Tests”:
+
+Open SWS + close Esc
+
+Open Settings root
+
+Open Transfer settings
+
+Open Row actions (три строки)
+
+Click cell edit
+
+Add row (+додати)
+
+Add subrow
+
+Delete row/subrow
+
+Backup export zip v2 / import dryrun
+
+Перевірка: всі кнопки працюють і не дають помилок у консолі.
+
+Фаза 1 — SWS Core vNext (ядро) без міграції екранів
+
+Це окрема фаза, щоб “ядро” було стабільним, перш ніж переносити екрани.
+
+Крок 1.1 — Ввести “Screen Spec” формат (тільки типи + контейнер)
+
+Мета: єдиний стандарт опису екранів.
+
+Додаємо модуль:
+src/ui/sws_v2/sws_screen_core.js
+
+ScreenSpec (мінімум):
+
+id
+
+title, subtitle
+
+render(ctx) -> HTMLElement
+
+buttons: primary, secondary (або none)
+
+keyboardPolicy: esc, enter, focusFirst, enterMode
+
+lifecycle: onOpen, onClose
+
+state: getDraft/setDraft/isDirty (опційно)
+
+Поки що: тільки структура + валідація spec.
+
+Перевірка: Debug Center показує “SWS ScreenCore loaded ✅”.
+
+Крок 1.2 — SWS Controller (єдина точка керування)
+
+Мета: відв’язати UI-модулі від прямого SettingsWindow.push і забезпечити централізований стан.
+
+Додаємо модуль:
+src/ui/sws_v2/sws_controller.js
+
+API:
+
+SWS.openScreen(spec, params)
+
+SWS.back()
+
+SWS.close()
+
+SWS.getStack()
+
+SWS.getActive()
+
+SWS.setPrimary({label, onClick, enabled})
+
+SWS.setKeyboardPolicy(...)
+
+Перевірка:
+
+відкрив тестовий екран через Debug Center → back/close працює
+
+Esc стабільно працює (capture, без конфліктів)
+
+Крок 1.3 — Кнопки внизу: повністю керуються controller’ом
+
+Мета: “Save/Transfer/none” залежно від екрану.
+
+Зміни:
+
+sws_modal.js перестає “сам” показувати Save/Back за умовчанням
+
+controller каже: які кнопки показати і з яким label.
+
+Перевірка:
+
+екран A: primary=“Зберегти”
+
+екран B: primary=“Перенести”
+
+екран C: primary hidden
+
+Esc завжди “back/close” вірно.
+
+Крок 1.4 — Keyboard policy (Enter/Esc/focus/next input) централізовано
+
+Мета: прибрати різні “Enter” хаки у кожній модалці.
+
+Реалізація:
+
+controller ставить global keydown handler (capture)
+
+якщо active screen має policy:
+
+focusFirstOnOpen
+
+enter: nextInput/submit/disabled
+
+esc: back/close
+
+Перевірка:
+
+AddRow в SWS: Enter циклічно по інпутах, останній → submit
+
+інший екран: Enter не сабмітить, якщо кнопки нема
+
+Фаза 2 — Міграція екранів (по одному), зі збереженням step34 поведінки
+
+Переходимо по “найбільш болючих” з найменшим ризиком.
+
+Група A: AddRow (бо вже частково на SWS)
+Крок 2.1 — AddRow переписати як ScreenSpec (без UI.modal fallback)
+
+Мета: зробити AddRow “еталонним прикладом” ScreenSpec.
+
+Перевірка:
+
+фокус на 1 input
+
+Enter next
+
+Enter last → add + close
+
+Esc → close без додавання
+
+Група B: QuickNav
+Крок 2.2 — QuickNav як ScreenSpec
+
+Мета: прибрати “одиночні кнопки/рядки”, стандартизувати навігаційний екран.
+
+Перевірка:
+
+відкриття з кнопки
+
+Esc/back стабільно
+
+перехід по журналам працює, не ламає table renderer
+
+Група C: Transfer (2 екрани + підтягування шаблонів)
+
+Це критично, бо зараз у step45 були інжекції/конфлікти.
+
+Крок 2.3 — Transfer Templates screen як ScreenSpec
+
+Мета: Settings→Transfer показує шаблони перенесення в SWS, як у step34.
+
+Перевірка:
+
+список шаблонів
+
+create/edit/delete
+
+жодних DOM injection
+
+CSS підтягується з SWS стилю
+
+Крок 2.4 — Transfer Execute screen як ScreenSpec
+
+Мета: кнопка перенесення в рядку відкриває SWS execute screen.
+
+Перевірка:
+
+відкриття з рядка
+
+primary кнопка “Перенести”
+
+Enter виконує “Перенести” лише коли фокус в полі (за policy)
+
+Esc повертає назад
+
+На цьому етапі ми викидаємо transfer_modals.js injection і робимо тільки SWS.
+
+Група D: Row actions (“три строки”)
+Крок 2.5 — Row Actions root як ScreenSpec
+
+Мета: замінити стару UI.modal на SWS екран.
+
+Склад екранів:
+
+Root: “Дії рядка”
+
+Subscreen: “Видалення”
+
+Subscreen: “Підстроки” (додати/видалити)
+
+(опційно) “Перенесення” → просто відкриває Transfer Execute
+
+Перевірка:
+
+кнопки працюють
+
+delete row/subrow робить rerender
+
+модалка закривається як треба
+
+Esc/back стабільно
+
+Група E: Backup
+Крок 2.6 — Backup screen як ScreenSpec (export/import)
+
+Мета: привести до однієї SWS модалки, як у step34.
+
+Перевірка:
+
+export zip v2
+
+import dryrun/apply
+
+confirm UX (C2.4) працює
+
+Група F: Debug Center
+Крок 2.7 — Debug Center як ScreenSpec (залишається)
+
+Мета: переробити лише під controller, щоб клавіатура/кнопки були стабільні.
+
+Група G: Settings (найскладніше)
+
+Це найбільше стеків, тому робимо поетапно.
+
+Крок 2.8 — Settings root перепідв’язати під controller
+
+Мета: не міняти внутрішню логіку, лише “обгортку”.
+
+Крок 2.9 — Settings stacks по черзі
+
+Порядок:
+
+UX/UI settings (просте)
+
+Table settings “Columns” (середнє)
+
+Templates settings (складніше)
+
+Transfer settings (вже зробили вище → сюди лише інтеграція)
+
+Перевірка: кожен стек відкривається/закривається, back працює, дані зберігаються.
+
+Фаза 3 — Таблиця/підстроки/рендер: звести до атомів
+
+Паралельно з міграцією екранів (але окремими маленькими кроками).
+
+Крок 3.1 — Один “table interaction controller”
+
+Мета: щоб кліки, редагування, відкриття row actions, transfer execute мали один entrypoint.
+
+Крок 3.2 — Ререндер ядро (твоя функція)
+
+Мета: requestTableRerender(info) стає єдиним шляхом оновлення:
+
+add/edit/delete row/subrow
+
+потім розширимо: scroll-to-anchor
+
+Крок 3.3 — Scroll anchoring при rerender (після стабілізації)
+
+Мета: після add/edit/delete автоматично повернутись до зміненого елементу.
+
+Фаза 4 — build/src-dist (після стабілізації UI)
+Крок 4.1 — D1 build_meta.json + показ у Debug Center
+
+Мета: завжди бачити, що реально зібрано і що завантажено.
+
+Крок 4.2 — D2 esbuild bundling (один entry)
+
+Мета: прибрати 50 runtime imports → один bundle.
+
+Крок 4.3 — D3 dist policy + verify
+
+Мета: dist не редагується руками.
+
+Крок 4.4 — D4 src only
+
+Мета: clean build з нуля без merge.
+
+Контрольні точки після кожного кроку
+
+Після кожного кроку ми проганяємо цей короткий чеклист:
+
+Сайт стартує
+
+Debug Center відкривається
+
+Settings відкривається
+
+QuickNav відкривається
+
+Клік по комірці → edit
+
++Додати → додає
+
+Підстрока add/edit/delete
+
+Row actions (“три строки”) працює
+
+Transfer settings + execute працює
+
+Backup export/import працює
+
+Esc/back/Enter не конфліктують
