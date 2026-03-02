@@ -31,6 +31,56 @@ async function walkFiles(dir, acc = []) {
   return acc;
 }
 
+
+async function syncAlternativeAArtifacts() {
+  const srcAdapter = path.join(projectRoot, 'src/ui/sws_v2/sws_adapter.js');
+  const distAdapter = path.join(projectRoot, 'dist/ui/sws_v2/sws_adapter.js');
+
+  if (await pathExists(srcAdapter)) {
+    await fs.mkdir(path.dirname(distAdapter), { recursive: true });
+    await fs.copyFile(srcAdapter, distAdapter);
+  }
+
+  const distBootstrap = path.join(projectRoot, 'dist/ui/ui_bootstrap_esm.js');
+  if (!(await pathExists(distBootstrap))) return;
+
+  let code = await fs.readFile(distBootstrap, 'utf8');
+  const importLine = 'import { createSwsAdapter } from "./sws_v2/sws_adapter.js";';
+  if (!code.includes(importLine)) {
+    const marker = 'import "./ui_backup.js";\n';
+    if (code.includes(marker)) code = code.replace(marker, marker + importLine + '\n');
+  }
+
+  const adapterBlock = `
+  // Strangler Adapter (Alternative A): one router for old/new modal channels.
+  const swsAdapter = createSwsAdapter({
+    getSettingsWindow: () => global.SettingsWindow || null,
+    openLegacyModal: (legacyPayload) => {
+      const modal = global.UI?.modal;
+      if (!modal || typeof modal.open !== 'function') {
+        throw new Error('Legacy modal channel is unavailable (UI.modal.open missing)');
+      }
+      return modal.open(legacyPayload);
+    }
+  });
+  UI.swsAdapter = swsAdapter;
+  global.SWSAdapter = swsAdapter;
+`;
+
+  if (!code.includes('UI.swsAdapter = swsAdapter;')) {
+    const insertionPoint = '  if (!tryAttachTransfer()) {\n';
+    const idx = code.indexOf(insertionPoint);
+    if (idx !== -1) {
+      const endBlock = code.indexOf('  // 2) Theme init (ESM theme runtime)', idx);
+      if (endBlock !== -1) {
+        code = code.slice(0, endBlock) + adapterBlock + '\n' + code.slice(endBlock);
+      }
+    }
+  }
+
+  await fs.writeFile(distBootstrap, code, 'utf8');
+}
+
 function getGitHash() {
   try {
     return execSync('git rev-parse --short HEAD', {
@@ -46,6 +96,8 @@ async function main() {
   if (!(await pathExists(distDir))) {
     throw new Error('dist directory is missing. Build D0 copy-safe mode requires existing dist.');
   }
+
+  await syncAlternativeAArtifacts();
 
   const allFiles = await walkFiles(distDir);
   const outputs = allFiles
