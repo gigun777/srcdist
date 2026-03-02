@@ -71,3 +71,22 @@ test('sws adapter supports custom swsOpen flow for root screens', () => {
   assert.equal(result.mode, 'custom-root');
   assert.deepEqual(calls, ['openCustomRoot', ['push', { title: 'Debug Center' }]]);
 });
+
+
+test('sws adapter can clear specific and all routes', () => {
+  const adapter = createSwsAdapter({
+    getSettingsWindow: () => ({ push: () => {} }),
+    openLegacyModal: () => {}
+  });
+
+  adapter.setRoute('debug.center', 'legacy');
+  adapter.setRoute('transfer.execute', 'legacy');
+
+  assert.equal(adapter.getRoute('debug.center'), 'legacy');
+  assert.equal(adapter.clearRoute('debug.center'), true);
+  assert.equal(adapter.getRoute('debug.center'), 'sws');
+
+  adapter.clearAllRoutes();
+  assert.deepEqual(adapter.getRoutesSnapshot(), {});
+  assert.equal(adapter.getRoute('transfer.execute'), 'sws');
+});

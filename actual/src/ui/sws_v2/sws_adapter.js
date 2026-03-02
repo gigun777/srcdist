@@ -16,6 +16,15 @@ export function createSwsAdapter(options = {}) {
     return routeByScreen.get(String(screenId)) || 'sws';
   }
 
+  function clearRoute(screenId) {
+    if (!screenId) throw new Error('clearRoute requires screenId');
+    return routeByScreen.delete(String(screenId));
+  }
+
+  function clearAllRoutes() {
+    routeByScreen.clear();
+  }
+
   function open(payload = {}) {
     const screenId = String(payload.screenId || 'unknown');
     const preferred = getRoute(screenId);
@@ -58,6 +67,8 @@ export function createSwsAdapter(options = {}) {
   return {
     setRoute,
     getRoute,
+    clearRoute,
+    clearAllRoutes,
     open,
     getHealth,
     getRoutesSnapshot: () => Object.fromEntries(routeByScreen.entries())

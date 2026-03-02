@@ -581,8 +581,36 @@ const runInspectZip = async ()=>{
       const healthBtn = ui.el('button','sws-btn', 'Health + routes');
       healthBtn.onclick = ()=>showState({ action: 'health' });
 
+      const clearRouteBtn = ui.el('button','sws-btn', 'Clear route');
+      clearRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.clearRoute !== 'function') throw new Error('adapter.clearRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const removed = ad.clearRoute(id);
+          showState({ action: 'clearRoute', id, removed, ok: true });
+        }catch(err){
+          showState({ action: 'clearRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const clearAllBtn = ui.el('button','sws-btn', 'Clear all routes');
+      clearAllBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.clearAllRoutes !== 'function') throw new Error('adapter.clearAllRoutes unavailable');
+          ad.clearAllRoutes();
+          showState({ action: 'clearAllRoutes', ok: true });
+        }catch(err){
+          showState({ action: 'clearAllRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
       adapterBtnRow.appendChild(setRouteBtn);
       adapterBtnRow.appendChild(getRouteBtn);
+      adapterBtnRow.appendChild(clearRouteBtn);
+      adapterBtnRow.appendChild(clearAllBtn);
       adapterBtnRow.appendChild(healthBtn);
 
       adapterCard.appendChild(adapterInfo);
