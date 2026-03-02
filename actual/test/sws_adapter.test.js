@@ -111,3 +111,13 @@ test('sws adapter exports and imports routes as JSON object', () => {
   assert.equal(adapter.getRoute('debug.center'), 'sws');
   assert.equal(adapter.getRoute('backup.import'), 'legacy');
 });
+
+test('sws adapter importRoutes rejects non-object payloads', () => {
+  const adapter = createSwsAdapter({
+    getSettingsWindow: () => ({ push: () => {} }),
+    openLegacyModal: () => {}
+  });
+
+  assert.throws(() => adapter.importRoutes([]), /importRoutes requires plain object/);
+  assert.throws(() => adapter.importRoutes(null), /importRoutes requires plain object/);
+});

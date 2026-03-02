@@ -30,7 +30,7 @@ export function createSwsAdapter(options = {}) {
   }
 
   function importRoutes(routes, options = {}) {
-    const next = routes && typeof routes === 'object' ? routes : null;
+    const next = routes && typeof routes === 'object' && !Array.isArray(routes) ? routes : null;
     if (!next) throw new Error('importRoutes requires plain object');
     if (options.replace !== false) routeByScreen.clear();
     for (const [screenId, route] of Object.entries(next)) {
