@@ -613,8 +613,8 @@ const runInspectZip = async ()=>{
         }
       };
 
-      const exportBtn = ui.el('button','sws-btn', 'Export routes JSON');
-      exportBtn.onclick = ()=>{
+      const exportRoutesBtn = ui.el('button','sws-btn', 'Export routes JSON');
+      exportRoutesBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
           if(!ad || typeof ad.exportRoutes !== 'function') throw new Error('adapter.exportRoutes unavailable');
@@ -625,8 +625,8 @@ const runInspectZip = async ()=>{
         }
       };
 
-      const importBtn = ui.el('button','sws-btn', 'Import routes JSON');
-      importBtn.onclick = ()=>{
+      const importRoutesBtn = ui.el('button','sws-btn', 'Import routes JSON');
+      importRoutesBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
           if(!ad || typeof ad.importRoutes !== 'function') throw new Error('adapter.importRoutes unavailable');
@@ -642,8 +642,8 @@ const runInspectZip = async ()=>{
       adapterBtnRow.appendChild(getRouteBtn);
       adapterBtnRow.appendChild(clearRouteBtn);
       adapterBtnRow.appendChild(clearAllBtn);
-      adapterBtnRow.appendChild(exportBtn);
-      adapterBtnRow.appendChild(importBtn);
+      adapterBtnRow.appendChild(exportRoutesBtn);
+      adapterBtnRow.appendChild(importRoutesBtn);
       adapterBtnRow.appendChild(healthBtn);
 
       adapterCard.appendChild(adapterInfo);
