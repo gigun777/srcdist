@@ -1,0 +1,18 @@
+Step50 — Alternative A runtime sync (без Big-Bang)
+
+Що зроблено:
+1) Оновлено `actual/scripts/build.mjs`:
+   - Додано `syncAlternativeAArtifacts()` перед генерацією build_meta.
+   - Скрипт копіює `src/ui/sws_v2/sws_adapter.js` у `dist/ui/sws_v2/sws_adapter.js`.
+   - Скрипт робить безпечну інʼєкцію adapter-підключення в `dist/ui/ui_bootstrap_esm.js` (idempotent).
+
+2) Оновлено `actual/scripts/verify-dist.mjs`:
+   - Додано обовʼязкову перевірку `dist/ui/sws_v2/sws_adapter.js`.
+
+Навіщо:
+- У runtime сторінка читає dist-файли, тому adapter мав бути гарантовано присутній саме в dist.
+- Це мінімальний і контрольований крок D-фази без повного bundling rewrite.
+
+Результат:
+- Після `npm run build` адаптер присутній у dist.
+- Runtime-перевірка в браузері показує `window.UI?.swsAdapter === true`.
