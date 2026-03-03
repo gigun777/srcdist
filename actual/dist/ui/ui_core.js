@@ -158,189 +158,11 @@ function findById(items, id) {
   return items.find((item) => item.id === id) ?? null;
 }
 
-
-// Opens QuickNav as its own modal root (SettingsWindow v2), using the same SWSQuickNav screen 1:1.
-// SWS-based modal screen for adding a journal (index + template picker).
-// Opens on top of QuickNav, focuses index, Enter=add, Esc=back.
-async function openAddJournalModal({ sdo, parentId, noNavigate = false }) {
-  const SW = window.SettingsWindow;
-  if (!SW) { console.warn('SettingsWindow not loaded'); return; }
-  const templates = await (sdo.journalTemplates?.listTemplateEntities?.() ?? Promise.resolve([]));
-  if (!templates || templates.length === 0) {
-    if (window.UI?.toast?.show) window.UI.toast.show('Оберіть шаблон: список шаблонів порожній', { type: 'warning' });
-    return;
-  }
-
-  let selectedTpl = null;
-
-  const body = document.createElement('div');
-  body.className = 'sws-body';
-
-  const card = document.createElement('div');
-  card.className = 'sws-card';
-
-  const rowIdx = document.createElement('div');
-  rowIdx.className = 'sws-row';
-  const idxLabel = document.createElement('div');
-  idxLabel.className = 'sws-label';
-  idxLabel.textContent = 'Індекс журналу';
-  const idxInput = document.createElement('input');
-  idxInput.className = 'sws-input';
-  idxInput.type = 'text';
-  idxInput.inputMode = 'text';
-  idxInput.placeholder = 'наприклад: A1, 1.1, Кадри';
-  rowIdx.append(idxLabel, idxInput);
-
-  const rowSearch = document.createElement('div');
-  rowSearch.className = 'sws-row';
-  const tplLabel = document.createElement('div');
-  tplLabel.className = 'sws-label';
-  tplLabel.textContent = 'Шаблон журналу';
-  const tplSearch = document.createElement('input');
-  tplSearch.className = 'sws-input';
-  tplSearch.placeholder = 'Пошук шаблонів…';
-  rowSearch.append(tplLabel, tplSearch);
-
-  const warn = document.createElement('div');
-  warn.className = 'sws-hint';
-  warn.style.color = 'var(--sws-danger, #b00020)';
-  warn.style.display = 'none';
-
-  const rowList = document.createElement('div');
-  rowList.className = 'sws-row';
-  const listLabel = document.createElement('div');
-  listLabel.className = 'sws-label';
-  listLabel.textContent = 'Шаблони (список)';
-
-  const listWrap = document.createElement('div');
-  listWrap.className = 'sws-list';
-  // Only the list scrolls, not the whole modal.
-  listWrap.style.maxHeight = '260px';
-  listWrap.style.overflow = 'auto';
-  listWrap.style.border = '1px solid rgba(0,0,0,0.12)';
-  listWrap.style.borderRadius = '10px';
-  listWrap.style.padding = '6px';
-  listWrap.style.background = 'rgba(255,255,255,0.6)';
-
-  const addBtn = document.createElement('button');
-  addBtn.className = 'sws-btn sws-primary';
-  addBtn.textContent = 'Додати';
-  addBtn.style.width = '100%';
-  addBtn.style.marginTop = '12px';
-  addBtn.disabled = true;
-
-  function templateMatches(t, q){
-    const hay = ((t.title||'') + ' ' + (t.id||'')).toLowerCase();
-    return hay.includes(q);
-  }
-
-  function renderList() {
-    const qRaw = (tplSearch.value || '');
-    const q = qRaw.trim().toLowerCase();
-    const filtered = (q.length >= 1)
-      ? templates.filter((t) => templateMatches(t, q))
-      : templates;
-
-    listWrap.innerHTML = '';
-    for (const tpl of filtered) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'sws-btn';
-      b.style.width = '100%';
-      b.style.textAlign = 'left';
-      b.style.margin = '4px 0';
-      b.textContent = tpl.title || tpl.id;
-      if (selectedTpl && selectedTpl.id === tpl.id) {
-        b.classList.add('sws-primary');
-      }
-      b.onclick = async () => {
-        selectedTpl = tpl;
-        warn.style.display = 'none';
-        addBtn.disabled = false;
-        renderList();
-      };
-      listWrap.appendChild(b);
-    }
-
-    if (!selectedTpl) addBtn.disabled = true;
-  }
-
-  tplSearch.addEventListener('input', () => renderList());
-
-  // Initial list render: show all templates by default.
-  renderList();
-
-  rowList.append(listLabel, listWrap);
-
-async function doAdd() {
-    if (!selectedTpl) {
-      warn.textContent = 'Оберіть шаблон журналу';
-      warn.style.display = 'block';
-      tplSearch.focus();
-      return;
-    }
-    const idxLabelText = (idxInput.value || '').trim();
-
-    const __newJournalId = crypto.randomUUID();
-
-    await sdo.commit((next) => {
-      const node = {
-        id: __newJournalId,
-        spaceId: next.activeSpaceId,
-        parentId,
-        templateId: selectedTpl.id,
-        title: (selectedTpl.title || 'Новий журнал') + (idxLabelText ? (' ' + idxLabelText) : ''),
-        childCount: 0,
-      };
-      next.journals = [...(next.journals || []), node];
-      if(!noNavigate) next.activeJournalId = node.id;
-    }, ['journals_nodes_v2', 'nav_last_loc_v2']);
-
-    await cleanupWelcomeSeedAfterFirstUserJournal(sdo, { parentId });
-
-    try { SW.pop(); } catch (_) {}
-  }
-
-  addBtn.onclick = doAdd;
-
-  const onKey = (ev) => {
-    if (ev.key === 'Escape') {
-      ev.preventDefault();
-      try { SW.pop(); } catch (_) {}
-    }
-    if (ev.key === 'Enter') {
-      ev.preventDefault();
-      doAdd();
-    }
-  };
-
-  card.append(rowIdx, rowSearch, rowList, warn, addBtn);
-  body.append(card);
-
-  SW.push({
-    title: 'Додати журнал',
-    subtitle: 'Вкажіть індекс та шаблон',
-    saveLabel: 'Додати',
-    content: () => body,
-    onSave: doAdd,
-    onMount: () => {
-      rebuildSelect();
-      document.addEventListener('keydown', onKey, true);
-      setTimeout(() => idxInput.focus(), 0);
-      rebuildSelect();
-    },
-    onUnmount: () => {
-      document.removeEventListener('keydown', onKey, true);
-    },
-  });
-};
-
 function openQuickNavRoot({ sdo }) {
   const SW = window.SettingsWindow;
   const QN = window.SWSQuickNav;
   if (!SW || !QN) {
     console.warn('QuickNav: SettingsWindow or SWSQuickNav not loaded');
-    return;
   }
 
   const buildJTreeSnapshot = (st) => {
@@ -436,9 +258,181 @@ function openQuickNavRoot({ sdo }) {
     return { nodes, rootIds };
   };
 
-  
+  // SWS-based modal screen for adding a journal (index + template picker).
+  // Opens on top of QuickNav, focuses index, Enter=add, Esc=back.
+  const openAddJournalModal = async (parentId, { noNavigate = false } = {}) => {
+    const templates = await (sdo.journalTemplates?.listTemplateEntities?.() ?? Promise.resolve([]));
+    if (!templates || templates.length === 0) {
+      if (window.UI?.toast?.show) window.UI.toast.show('Оберіть шаблон: список шаблонів порожній', { type: 'warning' });
+      return;
+    }
+
+    let selectedTpl = null;
+    let search = '';
+
+    const body = document.createElement('div');
+    body.className = 'sws-body';
+
+    const card = document.createElement('div');
+    card.className = 'sws-card';
+
+    const rowIdx = document.createElement('div');
+    rowIdx.className = 'sws-row';
+    const idxLabel = document.createElement('div');
+    idxLabel.className = 'sws-label';
+    idxLabel.textContent = 'Індекс журналу';
+    const idxInput = document.createElement('input');
+    idxInput.className = 'sws-input';
+    idxInput.type = 'number';
+    idxInput.inputMode = 'numeric';
+    idxInput.placeholder = '1';
+    rowIdx.append(idxLabel, idxInput);
+
+    const rowSearch = document.createElement('div');
+    rowSearch.className = 'sws-row';
+    const tplLabel = document.createElement('div');
+    tplLabel.className = 'sws-label';
+    tplLabel.textContent = 'Шаблон журналу';
+    const tplSearch = document.createElement('input');
+    tplSearch.className = 'sws-input';
+    tplSearch.placeholder = 'Пошук шаблонів…';
+    rowSearch.append(tplLabel, tplSearch);
+
+    const warn = document.createElement('div');
+    warn.className = 'sws-hint';
+    warn.style.color = 'var(--sws-danger, #b00020)';
+    warn.style.display = 'none';
+
+    const list = document.createElement('div');
+    list.className = 'sws-list';
+    list.style.maxHeight = '240px';
+    list.style.overflow = 'auto';
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'sws-btn sws-primary';
+    addBtn.textContent = 'Додати';
+    addBtn.style.width = '100%';
+    addBtn.style.marginTop = '12px';
+
+    function renderList() {
+      list.innerHTML = '';
+      const q = (search || '').trim().toLowerCase();
+      const filtered = !q ? templates : templates.filter((t) => (`${t.title} ${t.id}`).toLowerCase().includes(q));
+      if (filtered.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'sws-empty';
+        empty.textContent = 'Нічого не знайдено';
+        list.appendChild(empty);
+        return;
+      }
+      for (const tpl of filtered) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'sws-item';
+        btn.textContent = tpl.title;
+        if (selectedTpl && selectedTpl.id === tpl.id) btn.classList.add('sws-active');
+        btn.onclick = async () => {
+          selectedTpl = tpl;
+          warn.style.display = 'none';
+          renderList();
+        };
+        list.appendChild(btn);
+      }
+    }
+
+    tplSearch.addEventListener('input', () => {
+      search = tplSearch.value;
+      renderList();
+    });
+
+    async function doAdd() {
+      if (!selectedTpl) {
+        warn.textContent = 'Оберіть шаблон журналу';
+        warn.style.display = 'block';
+        tplSearch.focus();
+        return;
+      }
+      const idxNum = Number.parseInt(idxInput.value, 10);
+      const index = Number.isFinite(idxNum) && idxNum > 0 ? idxNum : null;
+
+      const __newJournalId = crypto.randomUUID();
+
+    await sdo.commit((next) => {
+      const node = {
+        id: __newJournalId,
+          spaceId: next.activeSpaceId,
+          parentId,
+          templateId: selectedTpl.id,
+          title: selectedTpl.title || 'Новий журнал',
+          childCount: 0,
+        };
+        if (index != null) node.index = index;
+        next.journals = [...(next.journals || []), node];
+        if(!noNavigate) next.activeJournalId = node.id;
+      }, ['journals_nodes_v2', 'nav_last_loc_v2']);
+
+    await cleanupWelcomeSeedAfterFirstUserJournal(sdo, { parentId });
+
+    try { SW.pop(); } catch (_) {}
+    }
+
+    addBtn.onclick = doAdd;
+
+    const onKey = (ev) => {
+      if (ev.key === 'Escape') {
+        ev.preventDefault();
+        try { SW.pop(); } catch (_) {}
+      }
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        doAdd();
+      }
+    };
+
+    card.append(rowIdx, rowSearch, list, warn, addBtn);
+    body.append(card);
+
+    SW.push({
+      title: 'Додати журнал',
+      subtitle: 'Вкажіть індекс та шаблон',
+      saveLabel: 'Додати',
+      content: () => body,
+      onSave: doAdd,
+      onMount: () => {
+        rebuildSelect();
+        document.addEventListener('keydown', onKey, true);
+        setTimeout(() => idxInput.focus(), 0);
+        renderList();
+      },
+      onUnmount: () => {
+        document.removeEventListener('keydown', onKey, true);
+      },
+    });
+  };
 
   const open = async () => {
+    const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+    if (adapter && typeof adapter.open === 'function') {
+      const legacyContent = document.createElement('div');
+      legacyContent.textContent = 'QuickNav доступний лише через SWS у цій версії.';
+      const adapterResult = adapter.open({
+        screenId: 'quicknav.root',
+        swsOpen: () => {
+          if (!SW || !QN) throw new Error('QuickNav SWS dependencies are unavailable');
+          return openSwsRoot();
+        },
+        legacy: { title: 'QuickNav', contentNode: legacyContent, closeOnOverlay: true }
+      });
+      if (adapterResult?.ok) return;
+    }
+
+    if (!(await openSwsRoot())) {
+      console.warn('QuickNav: unable to open (missing SWS dependencies and adapter fallback)');
+    }
+  };
+
+  const openSwsRoot = async () => {
+    if (!SW || !QN) return false;
     SW.openCustomRoot(() => {
       QN.openQuickNavScreen({
         getData: async () => {
@@ -527,15 +521,13 @@ function openQuickNavRoot({ sdo }) {
               next.activeJournalId = null;
             }
           }, ['spaces_nodes_v2', 'nav_last_loc_v2']);
-          await cleanupWelcomeSeedAfterFirstUserSpace(sdo, createdSpaceId);
+      await cleanupWelcomeSeedAfterFirstUserSpace(sdo, createdSpaceId);
         },
         onDeleteSpace: async (spaceId) => {
           await sdo.commit((next) => {
             const res = deleteSpaceSubtree(next.spaces, spaceId);
             next.spaces = res.nodes;
-            // Remove journals that belong to removed spaces
             next.journals = next.journals.filter((j) => j && !res.removedIds.has(j.spaceId));
-            // Fix active
             if (res.removedIds.has(next.activeSpaceId)) {
               next.activeSpaceId = next.spaces[0]?.id ?? null;
               const roots = next.journals.filter((j) => j && j.spaceId === next.activeSpaceId && (!j.parentId || j.parentId === next.activeSpaceId));
@@ -546,21 +538,14 @@ function openQuickNavRoot({ sdo }) {
             }
           }, ['spaces_nodes_v2', 'journals_nodes_v2', 'nav_last_loc_v2']);
         },
-        onAddJournalCurrentLevel: async ({ activeJournalId, activeSpaceId, focusJournalId, focusSpaceId }) => {
-          const stNow = sdo.getState();
-          const spaceId = focusSpaceId || activeSpaceId || stNow.activeSpaceId || null;
-          if(!spaceId) return;
-          let parentId = spaceId;
-          const basisJournalId = focusJournalId || activeJournalId || null;
-          if(basisJournalId){
-            const j = (stNow.journals||[]).find(x=>x && x.id===basisJournalId);
-            parentId = j?.parentId || spaceId;
-          }
-          await openAddJournalModal({ sdo, parentId, noNavigate: true });
-        },
         onAddJournalChild: async (pathIds) => {
           const parentId = Array.isArray(pathIds) && pathIds.length ? pathIds[pathIds.length - 1] : (sdo.getState().activeSpaceId || null);
-          await openAddJournalModal({ sdo, parentId: parentId, noNavigate: true });
+          await openAddJournalModal(parentId, { noNavigate: true });
+        },
+        // Add journal at an explicit level (parentId = spaceId for root journals, or journalId for subjournals).
+        onAddJournalCurrentLevel: async (arg) => {
+          const parentId = (arg && typeof arg === 'object') ? (arg.parentId ?? null) : null;
+          await openAddJournalModal(parentId, { noNavigate: true });
         },
         onDeleteJournal: async (journalId) => {
           await sdo.commit((next) => {
@@ -576,6 +561,7 @@ function openQuickNavRoot({ sdo }) {
   open();
 }
 
+
 export function createModuleManagerUI({ sdo, mount, api }) {
   if (!mount) return null;
 
@@ -583,7 +569,7 @@ export function createModuleManagerUI({ sdo, mount, api }) {
   try {
     window.__SDO_BOOT_OK__ = {
       at: new Date().toISOString(),
-      src: 'dist/ui/ui_core.js#createModuleManagerUI',
+      src: 'src/ui/ui_core.js#createModuleManagerUI',
       note: 'Step0 boot marker',
     };
   } catch (_) {}
@@ -632,7 +618,6 @@ export function createModuleManagerUI({ sdo, mount, api }) {
           overlay.className = 'sdo-ui-modal-overlay ui-modal';
           overlay.dataset.modalId = modalId;
           // Ensure the modal is ALWAYS above any other UI layers (incl. SWS v2).
-          // Use a very high z-index and increment per modal.
           overlay.style.position = 'fixed';
           overlay.style.inset = '0';
           overlay.style.zIndex = String(999000 + modalSeq);
@@ -776,14 +761,18 @@ export function createModuleManagerUI({ sdo, mount, api }) {
     onClick: () => openSettingsModal()
   }, ['⚙']);
 
-  // Backup / Import-Export button (next to Settings)
+  const themeButton = h('button', {
+    class: 'sdo-icon-btn sdo-theme-toggle',
+    title: 'День/Ніч',
+    onClick: () => { try { (globalThis.UI?.theme?.toggleTheme || globalThis.UI?.theme?.toggleTheme)?.call(globalThis.UI?.theme); } catch (_) {} }
+  }, ['◐']);
+
   const backupButton = h('button', {
     class: 'sdo-icon-btn sdo-backup-btn',
-    title: 'Backup / Імпорт / Експорт',
+    title: 'Backup',
     onClick: () => openBackupModal()
-  }, ['💾']);
+  }, ['⛁']);
 
-  // Debug Center button (next to Backup/Settings)
   const debugButton = h('button', {
     class: 'sdo-icon-btn sdo-debug-btn',
     title: 'Debug Center',
@@ -792,11 +781,1007 @@ export function createModuleManagerUI({ sdo, mount, api }) {
     }
   }, ['🧪']);
 
-  const themeButton = h('button', {
-    class: 'sdo-icon-btn sdo-theme-toggle',
-    title: 'День/Ніч',
-    onClick: () => { try { (globalThis.UI?.theme?.toggleTheme || globalThis.UI?.theme?.toggleTheme)?.call(globalThis.UI?.theme); } catch (_) {} }
-  }, ['◐']);
+// -----------------------------
+  // Backup / Import / Export modal
+  // -----------------------------
+  function openBackupModal() {
+    const sdoInst = sdo || window.sdo;
+    if (!sdoInst) {
+      window.UI?.toast?.show?.('SDO instance not found (window.sdo)', { type: 'error' });
+      return;
+    }
+
+    const getActiveJournalId = () => {
+      try {
+        return sdoInst.getState?.().activeJournalId || null;
+      } catch {
+        return null;
+      }
+    };
+
+    const getActiveJournalTitle = () => {
+      const st = sdoInst.getState?.() || {};
+      const id = st.activeJournalId;
+      const j = (st.journals || []).find((x) => x && x.id === id) || null;
+      return j?.title || j?.name || (id ? String(id) : '—');
+    };
+
+    // --- minimal ZIP (STORE) helpers ---
+    // Supports: a handful of files, ASCII names.
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+
+    const crcTable = (() => {
+      const table = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        table[i] = c >>> 0;
+      }
+      return table;
+    })();
+    function crc32(u8) {
+      let c = 0xFFFFFFFF;
+      for (let i = 0; i < u8.length; i++) c = crcTable[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+      return (c ^ 0xFFFFFFFF) >>> 0;
+    }
+    function u16(v) { const a = new Uint8Array(2); new DataView(a.buffer).setUint16(0, v, true); return a; }
+    function u32(v) { const a = new Uint8Array(4); new DataView(a.buffer).setUint32(0, v >>> 0, true); return a; }
+
+    function zipStore(files) {
+      // files: [{name, dataU8}]
+      let offset = 0;
+      const localParts = [];
+      const centralParts = [];
+
+      for (const f of files) {
+        const nameU8 = enc.encode(f.name);
+        const dataU8 = f.dataU8;
+        const crc = crc32(dataU8);
+
+        // Local file header
+        const local = [
+          u32(0x04034b50), // sig
+          u16(20), // ver
+          u16(0), // flags
+          u16(0), // method=store
+          u16(0), // mtime
+          u16(0), // mdate
+          u32(crc),
+          u32(dataU8.length),
+          u32(dataU8.length),
+          u16(nameU8.length),
+          u16(0),
+          nameU8,
+          dataU8,
+        ];
+        localParts.push(new Blob(local));
+
+        // Central directory header
+        const central = [
+          u32(0x02014b50),
+          u16(20),
+          u16(20),
+          u16(0),
+          u16(0),
+          u16(0),
+          u16(0),
+          u32(crc),
+          u32(dataU8.length),
+          u32(dataU8.length),
+          u16(nameU8.length),
+          u16(0),
+          u16(0),
+          u16(0),
+          u16(0),
+          u32(0),
+          u32(offset),
+          nameU8,
+        ];
+        centralParts.push(new Blob(central));
+
+        // Update offset by local header+name+data lengths
+        offset += 30 + nameU8.length + dataU8.length;
+      }
+
+      const centralSize = centralParts.reduce((sum, b) => sum + b.size, 0);
+      const centralOffset = offset;
+
+      const end = new Blob([
+        u32(0x06054b50),
+        u16(0),
+        u16(0),
+        u16(files.length),
+        u16(files.length),
+        u32(centralSize),
+        u32(centralOffset),
+        u16(0),
+      ]);
+
+      return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' });
+    }
+
+    async function unzipStoreGetFile(ab, wantedName) {
+      const u8 = new Uint8Array(ab);
+      // Find End of Central Directory signature from end
+      for (let i = u8.length - 22; i >= 0 && i >= u8.length - 66000; i--) {
+        if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) {
+          const dv = new DataView(u8.buffer, u8.byteOffset + i);
+          const cdSize = dv.getUint32(12, true);
+          const cdOff = dv.getUint32(16, true);
+          let p = cdOff;
+          const cdEnd = cdOff + cdSize;
+          while (p + 46 <= cdEnd) {
+            if (u8[p] !== 0x50 || u8[p + 1] !== 0x4b || u8[p + 2] !== 0x01 || u8[p + 3] !== 0x02) break;
+            const dvh = new DataView(u8.buffer, u8.byteOffset + p);
+            const nameLen = dvh.getUint16(28, true);
+            const extraLen = dvh.getUint16(30, true);
+            const commentLen = dvh.getUint16(32, true);
+            const lfhOff = dvh.getUint32(42, true);
+            const name = dec.decode(u8.slice(p + 46, p + 46 + nameLen));
+            if (name === wantedName) {
+              // Read local file header
+              const dvlfh = new DataView(u8.buffer, u8.byteOffset + lfhOff);
+              const lnameLen = dvlfh.getUint16(26, true);
+              const lextraLen = dvlfh.getUint16(28, true);
+              const compMethod = dvlfh.getUint16(8, true);
+              const compSize = dvlfh.getUint32(18, true);
+              const dataStart = lfhOff + 30 + lnameLen + lextraLen;
+              const data = u8.slice(dataStart, dataStart + compSize);
+              if (compMethod !== 0) throw new Error('ZIP: unsupported compression method');
+              return data;
+            }
+            p += 46 + nameLen + extraLen + commentLen;
+          }
+        }
+      }
+      return null;
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    function pickFile({ accept }) {
+      return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = accept || '*/*';
+        input.style.position = 'fixed';
+        input.style.left = '-10000px';
+        input.style.top = '0';
+        input.style.width = '1px';
+        input.style.height = '1px';
+        input.style.opacity = '0';
+        input.style.zIndex = '1000000';
+        document.body.appendChild(input);
+
+        let done = false;
+        const onFocusBack = async () => {
+          setTimeout(() => {
+            const file = (input.files && input.files[0]) ? input.files[0] : null;
+            finish(file);
+          }, 250);
+        };
+
+        const finish = async (file) => {
+          if (done) return;
+          done = true;
+          window.removeEventListener('focus', onFocusBack, true);
+          try { input.remove(); } catch (_) {}
+          resolve(file || null);
+        };
+
+        input.onchange = async () => {
+          const file = (input.files && input.files[0]) ? input.files[0] : null;
+          finish(file);
+        };
+
+        window.addEventListener('focus', onFocusBack, true);
+        input.click();
+      });
+    }
+
+
+    async function forceTableRerender() {
+      if (typeof sdoInst?.commit !== 'function') return;
+      await sdoInst.commit((next) => {
+        next.activeSpaceId = next.activeSpaceId;
+        next.activeJournalId = next.activeJournalId;
+      }, []);
+    }
+
+    
+
+function openImportDebugModal({ title, steps, rawErrors, meta }) {
+  const UI = window.UI;
+  if (!UI?.modal?.open) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sdo-import-debug';
+  wrap.style.maxWidth = '720px';
+  wrap.style.fontSize = '14px';
+  wrap.style.lineHeight = '1.35';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = title || 'Import debug';
+  h3.style.margin = '0 0 10px 0';
+
+  const ul = document.createElement('ul');
+  ul.style.margin = '0 0 10px 18px';
+  ul.style.padding = '0';
+
+  (steps || []).forEach((s) => {
+    const li = document.createElement('li');
+    li.textContent = `${s.ok ? '✅' : '❌'} ${s.stage}${s.msg ? `: ${s.msg}` : ''}`;
+    ul.appendChild(li);
+  });
+
+  const details = document.createElement('details');
+  details.style.marginTop = '8px';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Деталі (errors/meta)';
+  summary.style.cursor = 'pointer';
+
+  const pre = document.createElement('pre');
+  pre.style.whiteSpace = 'pre-wrap';
+  pre.style.wordBreak = 'break-word';
+  pre.style.background = '#1111';
+  pre.style.padding = '8px';
+  pre.style.borderRadius = '8px';
+  pre.textContent = JSON.stringify({ rawErrors, meta }, null, 2);
+
+  details.appendChild(summary);
+  details.appendChild(pre);
+
+  wrap.appendChild(h3);
+  wrap.appendChild(ul);
+  wrap.appendChild(details);
+
+  UI.modal.open({ title: 'JSON Import', contentNode: wrap, closeOnOverlay: true });
+}
+
+async function exportCurrentJournalJson() {
+      const id = getActiveJournalId();
+      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
+      const bundle = await sdoInst.api.tableStore.exportTableData({ journalIds: [id], includeFormatting: true });
+      const json = JSON.stringify(bundle, null, 2);
+      const fname = `journal_${getActiveJournalTitle()}_${new Date().toISOString().replace(/[:\.]/g, '-')}.json`;
+      downloadBlob(new Blob([json], { type: 'application/json' }), fname);
+      window.UI?.toast?.show?.('Експорт JSON виконано', { type: 'success' });
+    }
+
+    
+async function importCurrentJournalJson() {
+  const steps = [];
+  try {
+    const id = getActiveJournalId();
+    if (!id) {
+      steps.push({ stage: 'getActiveJournalId', ok: false, msg: 'activeJournalId пустий' });
+      openImportDebugModal({ title: 'Імпорт JSON (таблиця)', steps });
+      return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
+    }
+    steps.push({ stage: 'getActiveJournalId', ok: true, msg: id });
+
+    const file = await pickFile({ accept: 'application/json,.json' });
+    if (!file) {
+      steps.push({ stage: 'pickFile', ok: false, msg: 'Файл не обрано' });
+      openImportDebugModal({ title: 'Імпорт JSON (таблиця)', steps });
+      return;
+    }
+    steps.push({ stage: 'pickFile', ok: true, msg: file.name });
+
+    const text = await file.text();
+    steps.push({ stage: 'readFile', ok: true, msg: `${text.length} bytes` });
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+      steps.push({ stage: 'JSON.parse', ok: true });
+    } catch (_) {
+      steps.push({ stage: 'JSON.parse', ok: false, msg: 'JSON пошкоджений' });
+      openImportDebugModal({ title: 'Імпорт JSON (таблиця)', steps, meta: { file: file.name } });
+      return window.UI?.toast?.show?.('JSON пошкоджений', { type: 'error' });
+    }
+
+    // Force import into active journal: take the first dataset.
+    const ds0 = parsed?.datasets?.[0] || null;
+    const normalized = (parsed?.format === 'sdo-table-data') ? parsed : null;
+    let bundle = normalized;
+    if (!bundle && ds0) {
+      bundle = { format: 'sdo-table-data', formatVersion: 1, exportedAt: new Date().toISOString(), datasets: [ds0] };
+    }
+
+    if (!bundle || !Array.isArray(bundle.datasets) || bundle.datasets.length === 0) {
+      steps.push({ stage: 'normalize', ok: false, msg: 'Невідомий формат JSON для таблиці' });
+      openImportDebugModal({
+        title: 'Імпорт JSON (таблиця)',
+        steps,
+        meta: { detectedFormat: parsed?.format, hasDatasets: Array.isArray(parsed?.datasets), file: file.name }
+      });
+      window.UI?.toast?.show?.('Невідомий формат JSON для таблиці', { type: 'error' });
+      return;
+    }
+    steps.push({ stage: 'normalize', ok: true, msg: `datasets=${bundle.datasets.length}` });
+
+    // Rewrite journalId
+    bundle.datasets = bundle.datasets.map((d) => ({ ...d, journalId: id }));
+    steps.push({ stage: 'rewriteJournalId', ok: true });
+
+    let mode = 'replace';
+    if (typeof window.UI?.confirm === 'function') {
+      const okReplace = await window.UI.confirm(
+        'Імпорт JSON',
+        'Режим: ОК = replace (повністю замінити), Скасувати = merge (додати/оновити).',
+        { okText: 'Replace', cancelText: 'Merge' }
+      );
+      mode = okReplace ? 'replace' : 'merge';
+    }
+    steps.push({ stage: 'chooseMode', ok: true, msg: mode });
+
+    const res = await sdoInst.api.tableStore.importTableData(bundle, { mode });
+
+    if (res?.applied) {
+      steps.push({ stage: 'importTableData', ok: true, msg: `datasets=${Array.isArray(res?.datasets) ? res.datasets.length : 0}` });
+      await forceTableRerender();
+      steps.push({ stage: 'rerender', ok: true });
+
+      openImportDebugModal({ title: 'Імпорт JSON (таблиця) — OK', steps, meta: { mode, file: file.name } });
+
+      const count = Array.isArray(res?.datasets) ? res.datasets.length : 0;
+      window.UI?.toast?.show?.(`Імпорт JSON виконано (${mode})${count ? `, datasets: ${count}` : ''}`, { type: 'success' });
+      return;
+    }
+
+    steps.push({ stage: 'importTableData', ok: false, msg: (res?.errors || []).join(', ') || 'applied=false' });
+    openImportDebugModal({ title: 'Імпорт JSON (таблиця)', steps, rawErrors: res?.errors, meta: { mode, file: file.name } });
+    window.UI?.toast?.show?.(`Імпорт JSON не виконано: ${(res?.errors || []).join(', ')}`, { type: 'error' });
+  } catch (e) {
+    const msg = (e?.message || String(e));
+    steps.push({ stage: 'exception', ok: false, msg });
+    openImportDebugModal({ title: 'Імпорт JSON (таблиця) — CRASH', steps });
+    window.UI?.toast?.show?.('JSON імпорт помилка: ' + msg, { type: 'error' });
+  }
+}
+
+    async function exportCurrentJournalXlsx() {
+      const id = getActiveJournalId();
+      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
+      await sdoInst.exportXlsx({ journalIds: [id], filename: `journal_${getActiveJournalTitle()}` });
+      window.UI?.toast?.show?.('Експорт XLSX виконано', { type: 'success' });
+    }
+
+    async function importCurrentJournalXlsx() {
+      const id = getActiveJournalId();
+      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
+      const file = await pickFile({ accept: '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      if (!file) return;
+
+      let res;
+      try {
+        // Import into current journal regardless of sheet names.
+        res = await sdoInst.importXlsx(file, { mode: 'merge', targetJournalId: id });
+      } catch (e) {
+        window.UI?.toast?.show?.('XLSX імпорт помилка: ' + (e?.message || e), { type: 'error' });
+        return;
+      }
+
+      await forceTableRerender();
+      const cnt = (res?.sheets || []).reduce((a, x) => a + (x?.imported || 0), 0);
+      window.UI?.toast?.show?.('Імпорт XLSX виконано' + (cnt ? (', рядків: ' + cnt) : ''), { type: 'success' });
+    }
+
+        // --- ZIP v2 backup: manifest + per-journal json files ---
+    function safeTs(ts = new Date()) {
+      return new Date(ts).toISOString().replace(/[:\.]/g, '-');
+    }
+
+    function computeDatasetStatsForBackup(dataset) {
+      const records = Array.isArray(dataset?.records) ? dataset.records : [];
+      const rowsCount = records.length;
+
+      let rowsWithSubrows = 0;
+      const dist = {};
+      const colSet = new Set();
+
+      for (const r of records) {
+        const cells = (r && typeof r.cells === 'object' && r.cells) ? r.cells : {};
+        for (const k of Object.keys(cells)) colSet.add(String(k));
+
+        const sub = Array.isArray(r?.subrows) ? r.subrows : [];
+        const n = sub.length;
+        dist[String(n)] = (dist[String(n)] || 0) + 1;
+        if (n > 0) rowsWithSubrows += 1;
+
+        for (const s of sub) {
+          const sc = (s && typeof s.cells === 'object' && s.cells) ? s.cells : {};
+          for (const k of Object.keys(sc)) colSet.add(String(k));
+        }
+      }
+
+      return {
+        columnsCount: colSet.size,
+        rowsCount,
+        rowsWithSubrows,
+        subrowsDistribution: dist
+      };
+    }
+
+    function buildJournalPathMap({ spaces, journals }) {
+      const spaceById = new Map((spaces || []).map((s) => [s.id, s]));
+      const journalById = new Map((journals || []).map((j) => [j.id, j]));
+
+      const memo = new Map();
+      function compute(jId) {
+        if (memo.has(jId)) return memo.get(jId);
+        const j = journalById.get(jId);
+        if (!j) return null;
+        const parentId = j.parentId;
+
+        const idx = (j.index != null && String(j.index).trim() !== '') ? String(j.index).trim() : (j.title || j.name || 'X');
+        // Root journal: parent is spaceId
+        if (spaceById.has(parentId)) {
+          memo.set(jId, idx);
+          return idx;
+        }
+        // Nested journal
+        const p = compute(parentId);
+        const out = p ? `${p}.${idx}` : idx;
+        memo.set(jId, out);
+        return out;
+      }
+
+      const out = {};
+      for (const j of journals || []) {
+        if (!j?.id) continue;
+        out[j.id] = compute(j.id) || (j.index ? String(j.index) : String(j.id));
+      }
+      return out;
+    }
+
+    async function exportAllZip() {
+      const createdAt = new Date().toISOString();
+      const ts = safeTs(createdAt);
+
+      // Export full backup bundle from core (single source of truth) and split to files.
+      const bundle = await sdoInst.exportBackup({ scope: 'all', includeUserData: true });
+
+      // NOTE: bundle.core.navigation is a NAV PAYLOAD (spaces_nodes_v2/journals_nodes_v2), not the in-memory nav state.
+      // For export we must use the actual runtime state (single source of truth) to enumerate spaces/journals.
+      // Otherwise we export only structure (navigation payload) but miss journal datasets.
+      const navPayload = bundle?.core?.navigation || null;
+      const st0 = (sdoInst?.api?.getState && typeof sdoInst.api.getState === 'function') ? sdoInst.api.getState() : {};
+      const spaces = Array.isArray(st0.spaces) ? st0.spaces : [];
+      const journals = Array.isArray(st0.journals) ? st0.journals : [];
+
+      // --- Path helpers for ZIP v2 journal files (human readable, stable) ---
+      // IMPORTANT: numbering is computed from the tree order (like Transfer tree), not parsed from titles.
+      const spaceById = new Map(spaces.map((s) => [s.id, s]));
+      const journalById = new Map(journals.map((j) => [j.id, j]));
+
+      function translitUaToLat(s) {
+        const map = {
+          'а':'a','б':'b','в':'v','г':'h','ґ':'g','д':'d','е':'e','є':'ie','ж':'zh','з':'z','и':'y','і':'i','ї':'i','й':'i',
+          'к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ю':'iu','я':'ia',
+          'ь':'','ʼ':'','’':'','`':'','"':'',"\'":'',
+        };
+        return String(s ?? '').toLowerCase().split('').map((ch) => map.hasOwnProperty(ch) ? map[ch] : ch).join('');
+      }
+
+      function slugUa(s) {
+        const t = translitUaToLat(String(s ?? ''));
+        return t.replace(/[^a-z0-9]+/g, '').trim();
+      }
+
+      const buildSpaceSnapshotForExport = (spacesList) => {
+        const nodes = {};
+        const rootIds = [];
+        const list = Array.isArray(spacesList) ? spacesList.filter(Boolean) : [];
+        const meta = {};
+        for (const sp of list) {
+          nodes[sp.id] = { id: sp.id, title: sp.title || sp.name || sp.id, parentId: sp.parentId || null, children: [] };
+          meta[sp.id] = { createdAt: sp.createdAt || null, title: String(sp.title || sp.name || sp.id || '') };
+        }
+        for (const sp of list) {
+          const pid = sp.parentId || null;
+          if (pid && nodes[pid]) nodes[pid].children.push(sp.id);
+          else rootIds.push(sp.id);
+        }
+        // Stable numbering: order spaces by createdAt (ascending). Fallback to title.
+        const sortIds = (ids) => ids.sort((a, b) => {
+          const A = meta[a] || { createdAt: null, title: '' };
+          const B = meta[b] || { createdAt: null, title: '' };
+          const ca = A.createdAt ? Date.parse(A.createdAt) : NaN;
+          const cb = B.createdAt ? Date.parse(B.createdAt) : NaN;
+          const ha = Number.isFinite(ca);
+          const hb = Number.isFinite(cb);
+          if (ha && hb && ca !== cb) return ca - cb;
+          if (ha && !hb) return -1;
+          if (!ha && hb) return 1;
+          return String(A.title).localeCompare(String(B.title));
+        });
+        sortIds(rootIds);
+        for (const id of Object.keys(nodes)) sortIds(nodes[id].children);
+        return { nodes, rootIds };
+      };
+
+      const buildJournalSnapshotForSpace = (spaceId) => {
+        const nodes = {};
+        const topIds = [];
+        const list = Array.isArray(journals)
+          ? journals.filter((j) => j && j.spaceId === spaceId)
+          : [];
+        const meta = {};
+        for (const j of list) {
+          meta[j.id] = { idx: typeof j.index === 'number' ? j.index : 1e9, title: String(j.title || j.name || '') };
+          nodes[j.id] = { id: j.id, title: j.title || j.name || j.id, parentId: j.parentId || null, children: [] };
+        }
+        for (const j of list) {
+          const pid = j.parentId || spaceId;
+          if (nodes[pid]) nodes[pid].children.push(j.id);
+          else topIds.push(j.id);
+        }
+        const sortIds = (ids) => {
+          ids.sort((a, b) => {
+            const A = meta[a] || { idx: 1e9, title: '' };
+            const B = meta[b] || { idx: 1e9, title: '' };
+            if (A.idx !== B.idx) return A.idx - B.idx;
+            return A.title.localeCompare(B.title);
+          });
+        };
+        sortIds(topIds);
+        for (const id of Object.keys(nodes)) sortIds(nodes[id].children);
+        return { nodes, topIds };
+      };
+
+      const sSnapExp = buildSpaceSnapshotForExport(spaces);
+      const spaceNums = computeTreeNumbering(sSnapExp.rootIds, (id) => sSnapExp.nodes[id]?.children || []);
+      const journalNums = new Map();
+      for (const sp of spaces) {
+        if (!sp?.id) continue;
+        const jSnap = buildJournalSnapshotForSpace(sp.id);
+        const jMap = computeTreeNumbering(jSnap.topIds, (id) => jSnap.nodes[id]?.children || []);
+        for (const [jid, num] of jMap.entries()) journalNums.set(jid, num);
+      }
+
+      function findSpaceForJournal(journal) {
+        if (!journal) return null;
+        let pid = journal.parentId;
+        // Walk up journal parents until parentId is a space id.
+        while (pid && !spaceById.has(pid)) {
+          const pj = journalById.get(pid);
+          if (!pj) break;
+          pid = pj.parentId;
+        }
+        return pid && spaceById.has(pid) ? spaceById.get(pid) : null;
+      }
+
+      // Templates / settings payloads
+      const journalTemplates = bundle?.modules?.['journal-templates']?.data?.templates || [];
+      const transferTemplates = bundle?.modules?.['transfer-templates']?.data?.templates || [];
+      const tableSettings = bundle?.modules?.['table-settings']?.data?.settings || {};
+      const coreSettings = bundle?.core?.settings?.coreSettings || {};
+      const tableData = bundle?.modules?.['table-datasets']?.data || { format: 'sdo-table-data', formatVersion: 1, datasets: [] };
+
+      const tplById = new Map(journalTemplates.map((t) => [t.id, t]));
+      const pathByJournalId = buildJournalPathMap({ spaces, journals });
+      const tableStore = sdoInst?.api?.tableStore || null;
+
+      // Build per-journal files
+      const journalFiles = [];
+      const datasetByJournalId = new Map((tableData?.datasets || []).map((d) => [d.journalId, d]));
+
+      for (const j of journals) {
+        const space = findSpaceForJournal(j);
+        const sNum = (space && spaceNums.get(space.id)) ? spaceNums.get(space.id) : '0';
+        const jNum = journalNums.get(j.id) || '0';
+        const pathStr = `s${sNum}${slugUa(space?.title || space?.name || '')}/j${jNum}${slugUa(j.title || j.name || '')}`;
+        if (!j?.id) continue;
+        // Prefer single-source-of-truth: read dataset directly from tableStore for each journal.
+        // This avoids relying on tableStore:index (which may be incomplete in some edge cases).
+        let ds = null;
+        if (tableStore && typeof tableStore.getDataset === 'function') {
+          try { ds = await tableStore.getDataset(j.id); } catch { ds = null; }
+        }
+        if (!ds) ds = datasetByJournalId.get(j.id) || { journalId: j.id, records: [], meta: {} };
+        const st = computeDatasetStatsForBackup(ds);
+
+        const tpl = tplById.get(j.templateId) || null;
+        const templateName = tpl?.title || tpl?.name || tpl?.id || j.templateId || null;
+
+        const TABLE_SETTINGS_KEY = '@sdo/module-table-renderer:settings';
+        const perJournalSettings = tableSettings?.[`${TABLE_SETTINGS_KEY}:${j.id}`] ?? null;
+
+        const payload = {
+          format: 'sdo-journal',
+          version: 2,
+          createdAt,
+          meta: {
+            journalId: j.id,
+            spaceId: j.spaceId,
+            parentId: j.parentId,
+            title: j.title || j.name || null,
+            index: j.index ?? null,
+            path: pathStr,
+            templateId: j.templateId || null,
+            templateName,
+            columnsCount: st.columnsCount,
+            rowsCount: st.rowsCount,
+            rowsWithSubrows: st.rowsWithSubrows,
+            subrowsDistribution: st.subrowsDistribution,
+            exportedAt: createdAt,
+            // path is already set above
+          },
+          settings: {
+            tableRenderer: perJournalSettings
+          },
+          data: {
+            dataset: ds
+          }
+        };
+
+        const name = `journals/journal_${j.id}_${ts}.json`;
+        journalFiles.push({ name, dataU8: enc.encode(JSON.stringify(payload, null, 2)) });
+      }
+
+      // Top-level files
+      const files = [];
+
+      // Manifest
+      const manifest = {
+        format: 'sdo-backup-zip',
+        version: 2,
+        createdAt,
+        app: bundle?.app || { name: '@sdo/core', version: 'unknown' },
+        mode: 'full',
+        contains: {
+          journals: true,
+          journalTemplates: true,
+          transferTemplates: true,
+          columnTypes: true,
+          settings: true,
+          navigation: true
+        },
+        files: {
+          manifest: 'manifest.json',
+          navigation: 'spaces/navigation.json',
+          journalTemplates: 'templates/journal_templates.json',
+          transferTemplates: 'templates/transfer_templates.json',
+          columnTypes: 'templates/column_types.json',
+          globalSettings: 'settings/global_settings.json',
+          journals: journalFiles.map((f) => f.name)
+        },
+        order: [
+          'journalTemplates',
+          'transferTemplates',
+          'columnTypes',
+          'settings',
+          'navigation',
+          'journalsData'
+        ]
+      };
+
+      files.push({ name: 'manifest.json', dataU8: enc.encode(JSON.stringify(manifest, null, 2)) });
+
+      // Navigation
+      files.push({
+        name: 'spaces/navigation.json',
+        dataU8: enc.encode(JSON.stringify({ format: 'sdo-navigation', version: 1, createdAt, navigation: nav }, null, 2))
+      });
+
+      // Templates
+      files.push({
+        name: 'templates/journal_templates.json',
+        dataU8: enc.encode(JSON.stringify({ format: 'sdo-journal-templates', version: 1, createdAt, templates: journalTemplates }, null, 2))
+      });
+      files.push({
+        name: 'templates/transfer_templates.json',
+        dataU8: enc.encode(JSON.stringify({ format: 'sdo-transfer-templates', version: 1, createdAt, templates: transferTemplates }, null, 2))
+      });
+
+      // Column types (placeholder for now)
+      files.push({
+        name: 'templates/column_types.json',
+        dataU8: enc.encode(JSON.stringify({ format: 'sdo-column-types', version: 1, createdAt, columnTypes: [] }, null, 2))
+      });
+
+      // Global settings
+      files.push({
+        name: 'settings/global_settings.json',
+        dataU8: enc.encode(JSON.stringify({
+          format: 'sdo-settings',
+          version: 1,
+          createdAt,
+          coreSettings,
+          tableSettings
+        }, null, 2))
+      });
+
+      files.push(...journalFiles);
+
+      const zipBlob = zipStore(files);
+      const fname = `backup_all_${ts}.zip`;
+      downloadBlob(zipBlob, fname);
+      window.UI?.toast?.show?.('Експорт ZIP (v2) виконано', { type: 'success' });
+    }
+
+    async function unzipStoreIndex(ab) {
+      const u8 = new Uint8Array(ab);
+      const names = [];
+      // Find End of Central Directory signature from end
+      for (let i = u8.length - 22; i >= 0 && i >= u8.length - 66000; i--) {
+        if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) {
+          const dv = new DataView(u8.buffer, u8.byteOffset + i);
+          const cdSize = dv.getUint32(12, true);
+          const cdOff = dv.getUint32(16, true);
+          let p = cdOff;
+          const cdEnd = cdOff + cdSize;
+          while (p + 46 <= cdEnd) {
+            if (u8[p] !== 0x50 || u8[p + 1] !== 0x4b || u8[p + 2] !== 0x01 || u8[p + 3] !== 0x02) break;
+            const dvh = new DataView(u8.buffer, u8.byteOffset + p);
+            const nameLen = dvh.getUint16(28, true);
+            const extraLen = dvh.getUint16(30, true);
+            const commentLen = dvh.getUint16(32, true);
+            const name = dec.decode(u8.slice(p + 46, p + 46 + nameLen));
+            names.push(name);
+            p += 46 + nameLen + extraLen + commentLen;
+          }
+          return names;
+        }
+      }
+      return names;
+    }
+
+    async function importAllZip() {
+      const file = await pickFile({ accept: '.zip,application/zip' });
+      if (!file) return;
+      const ab = await file.arrayBuffer();
+
+      // Require manifest for now (future: allow partial batch import)
+      const manifestU8 = await unzipStoreGetFile(ab, 'manifest.json');
+      if (!manifestU8) {
+        window.UI?.toast?.show?.('У ZIP відсутній manifest.json. Поки що імпорт без manifest не підтримується.', { type: 'error' });
+        return;
+      }
+
+      let manifest;
+      try { manifest = JSON.parse(dec.decode(manifestU8)); } catch {
+        window.UI?.toast?.show?.('manifest.json пошкоджений', { type: 'error' });
+        return;
+      }
+      if (manifest?.format !== 'sdo-backup-zip' || manifest?.version !== 2) {
+        window.UI?.toast?.show?.('Непідтримуваний формат manifest.json', { type: 'error' });
+        return;
+      }
+
+      // Import mode: replace must clear all storage
+      const okReplace = await window.UI?.confirm?.('Імпорт ZIP', 'Режим: ОК = replace (очистити все і відновити), Скасувати = merge (об’єднати).', { okText: 'Replace', cancelText: 'Merge' });
+      const mode = okReplace ? 'replace' : 'merge';
+
+      // Step 0: clear storage on replace
+      if (mode === 'replace') {
+        try {
+          const items = (await sdoInst.api?.storage?.list?.('')) || [];
+          for (const it of items) {
+            if (it?.key) await sdoInst.api.storage.del(it.key);
+          }
+        } catch (e) {
+          window.UI?.toast?.show?.('Не вдалося очистити сховище: ' + (e?.message || e), { type: 'error' });
+          return;
+        }
+      }
+
+      // Read required files
+      const f = manifest.files || {};
+      const navPath = f.navigation || 'spaces/navigation.json';
+      const jtPath = f.journalTemplates || 'templates/journal_templates.json';
+      const ttPath = f.transferTemplates || 'templates/transfer_templates.json';
+      const gsPath = f.globalSettings || 'settings/global_settings.json';
+      const journalPaths = Array.isArray(f.journals) ? f.journals : [];
+
+      const getJson = async (path) => {
+        const u8 = await unzipStoreGetFile(ab, path);
+        if (!u8) throw new Error(`ZIP: missing file ${path}`);
+        return JSON.parse(dec.decode(u8));
+      };
+
+      let navJson, jtJson, ttJson, gsJson;
+      try {
+        navJson = await getJson(navPath);
+        jtJson = await getJson(jtPath);
+        ttJson = await getJson(ttPath);
+        gsJson = await getJson(gsPath);
+      } catch (e) {
+        window.UI?.toast?.show?.('ZIP імпорт помилка: ' + (e?.message || e), { type: 'error' });
+        return;
+      }
+
+      // Build classic backup bundle and import via core (single source of truth)
+      const backupBundle = {
+        format: 'sdo-backup',
+        formatVersion: 1,
+        backupId: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        app: manifest.app || { name: '@sdo/core', version: 'unknown' },
+        scope: 'all',
+        core: {
+          navigation: navJson?.navigation || navJson?.core?.navigation || navJson?.payload || navJson?.navigation,
+          settings: { coreSettings: gsJson?.coreSettings || {} }
+        },
+        modules: {},
+        userData: {},
+        integrity: null
+      };
+
+      backupBundle.modules['journal-templates'] = { moduleVersion: '0.1.0', data: { templates: jtJson?.templates || [] } };
+      backupBundle.modules['transfer-templates'] = { moduleVersion: '1.0.0', data: { templates: ttJson?.templates || [] } };
+      backupBundle.modules['table-settings'] = { moduleVersion: '1.0.0', data: { settings: gsJson?.tableSettings || {} } };
+
+      // Journals: read each file, validate minimal fields, gather datasets
+      const datasets = [];
+      const existingTemplates = new Set((jtJson?.templates || []).map((t) => t?.id).filter(Boolean));
+
+      for (const p of journalPaths) {
+        let jdoc;
+        try { jdoc = await getJson(p); } catch (e) {
+          window.UI?.toast?.show?.('Помилка читання journal: ' + p, { type: 'error' });
+          return;
+        }
+        const meta = jdoc?.meta || {};
+        const ds = jdoc?.data?.dataset || null;
+        if (!ds?.journalId) continue;
+
+        // Minimal validation
+        const cols = Number(meta.columnsCount ?? 0);
+        const rows = Number(meta.rowsCount ?? 0);
+
+        if (!cols && !rows && Array.isArray(ds.records)) {
+          const st = computeDatasetStatsForBackup(ds);
+          meta.columnsCount = st.columnsCount;
+          meta.rowsCount = st.rowsCount;
+        }
+
+        // Template validation: allow create with confirmation
+        const tplId = meta.templateId || null;
+        if (tplId && !existingTemplates.has(tplId)) {
+          const okCreate = await window.UI?.confirm?.('Імпорт ZIP', `Відсутній шаблон журналу "${tplId}". Створити?`, { okText: 'Створити', cancelText: 'Скасувати' });
+          if (!okCreate) {
+            window.UI?.toast?.show?.(`Імпорт скасовано: відсутній шаблон ${tplId}`, { type: 'error' });
+            return;
+          }
+          // Create minimal placeholder template
+          (jtJson.templates = jtJson.templates || []).push({ id: tplId, title: meta.templateName || tplId, columns: [] });
+          existingTemplates.add(tplId);
+          backupBundle.modules['journal-templates'].data.templates = jtJson.templates;
+        }
+
+        // Columns mismatch: allow with confirmation
+        const tpl = (jtJson?.templates || []).find((t) => t?.id === tplId) || null;
+        const tplCols = Array.isArray(tpl?.columns) ? tpl.columns.length : null;
+        if (tplCols != null && cols && tplCols !== cols) {
+          const okContinue = await window.UI?.confirm?.('Імпорт ZIP', `Різна кількість колонок для шаблону "${tplId}": у файлі ${cols}, у шаблоні ${tplCols}. Продовжити?`, { okText: 'Так', cancelText: 'Ні' });
+          if (!okContinue) {
+            window.UI?.toast?.show?.('Імпорт скасовано через розбіжність колонок', { type: 'error' });
+            return;
+          }
+        }
+
+        datasets.push(ds);
+      }
+
+      backupBundle.modules['table-datasets'] = { moduleVersion: '1.0.0', data: { format: 'sdo-table-data', formatVersion: 1, exportedAt: new Date().toISOString(), datasets } };
+
+      try {
+        await sdoInst.importBackup(backupBundle, { mode, includeUserData: true });
+        // Ensure table datasets are applied even if backup provider path changes.
+        // Single source of truth: apply datasets through tableStore API.
+        try {
+          if (Array.isArray(datasets) && datasets.length && sdoInst?.api?.tableStore?.importTableData) {
+            await sdoInst.api.tableStore.importTableData({ format: 'sdo-table-data', formatVersion: 1, datasets }, { mode });
+          }
+        } catch (e2) {
+          console.warn('[ZIP v2] table datasets apply failed', e2);
+        }
+
+        window.UI?.toast?.show?.(`Імпорт ZIP (v2) виконано (${mode})`, { type: 'success' });
+      } catch (e) {
+        window.UI?.toast?.show?.(`Імпорт ZIP помилка: ${e.message || e}`, { type: 'error' });
+      }
+    }
+
+    const body = document.createElement('div');
+    body.className = 'ui-modal-content';
+
+    const title = document.createElement('div');
+    title.style.marginBottom = '8px';
+    title.innerHTML = `<b>Backup / Import / Export</b><div style="opacity:.8;font-size:.9em">Поточний журнал: ${getActiveJournalTitle()}</div>`;
+
+    const grid = document.createElement('div');
+    grid.style.display = 'grid';
+    grid.style.gridTemplateColumns = '1fr 1fr';
+    grid.style.gap = '8px';
+
+    const mkBtn = (label, fn, primary=false) => {
+      const b = document.createElement('button');
+      b.className = primary ? 'btn btn-primary' : 'btn';
+      b.textContent = label;
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
+          await fn();
+        } catch (e) {
+          console.error('[Backup modal action failed]', label, e);
+          const msg = (e && (e.message || e.toString)) ? (e.message || String(e)) : String(e);
+          window.UI?.toast?.show?.(`${label}: помилка: ${msg}`, { type: 'error' });
+          try { window.UI?.modal?.alert?.(`${label}:\n${msg}`, { title: 'Помилка' }); } catch (_) {}
+        } finally {
+          b.disabled = false;
+        }
+      };
+      return b;
+    };
+
+    grid.append(
+      mkBtn('Імпорт JSON (поточний)', importCurrentJournalJson, true),
+      mkBtn('Експорт JSON (поточний)', exportCurrentJournalJson),
+      mkBtn('Імпорт Excel (поточний)', importCurrentJournalXlsx, true),
+      mkBtn('Експорт Excel (поточний)', exportCurrentJournalXlsx)
+    );
+
+    const hr = document.createElement('div');
+    hr.style.height = '1px';
+    hr.style.background = 'rgba(0,0,0,0.08)';
+    hr.style.margin = '12px 0';
+
+    const zipRow = document.createElement('div');
+    zipRow.style.display = 'grid';
+    zipRow.style.gridTemplateColumns = '1fr 1fr';
+    zipRow.style.gap = '8px';
+    zipRow.append(
+      mkBtn('Імпорт всього ZIP', importAllZip, true),
+      mkBtn('Експорт всього ZIP', exportAllZip)
+    );
+
+    body.append(title, grid, hr, zipRow);
+
+    const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+    const legacyPayload = {
+      title: 'Backup',
+      contentNode: body,
+      closeOnOverlay: true,
+    };
+
+    if (adapter && typeof adapter.open === 'function') {
+      const adapterResult = adapter.open({
+        screenId: 'backup.manager',
+        swsOpen: () => {
+          const SW = window.SettingsWindow;
+          if (!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function') {
+            throw new Error('Backup SWS dependencies are unavailable');
+          }
+          SW.openCustomRoot(() => SW.push({
+            title: 'Backup',
+            subtitle: `Поточний журнал: ${getActiveJournalTitle()}`,
+            content: body,
+            saveLabel: 'OK',
+            canSave: () => false,
+          }));
+        },
+        legacy: legacyPayload,
+      });
+      if (adapterResult?.ok) return;
+    }
+
+    window.UI?.modal?.open?.(legacyPayload);
+  }
+
 
   function closeModal() { modal.close(); }
 
@@ -885,7 +1870,7 @@ export function createModuleManagerUI({ sdo, mount, api }) {
 
     async function renderAll() {
       renderHeader();
-      rebuildSelect();
+      renderList();
     }
 
     const modalChildren = [
@@ -1124,7 +2109,7 @@ function openChildPicker({ kind, parents, currentParentId, getParentId, getParen
 
     async function renderAll() {
       renderHeader();
-      rebuildSelect();
+      renderList();
     }
 
     header.append(titleEl, navRow);
@@ -1273,25 +2258,24 @@ async function openTemplatesManager() {
       } catch (_) {
         entities = [];
       }
-      for (const ent of Array.isArray(entities) ? entities : []) {
+      for (const ent of (Array.isArray(entities) ? entities : [])) {
         const tplId = ent.id;
         if (!tplId) continue;
         let tpl = null;
-        try {
-          tpl = await sdo.journalTemplates.getTemplate(tplId);
-        } catch (_) {
-          tpl = null;
-        }
+        try { tpl = await sdo.journalTemplates.getTemplate(tplId); } catch (_) { tpl = null; }
         let columns = [];
         if (tpl && Array.isArray(tpl.columns) && tpl.columns.length) {
           columns = tpl.columns.map(c => ({ id: c.key, name: c.label ?? c.key }));
         } else {
+          // If template structure is unavailable, keep a safe placeholder column.
           columns = [{ id: 'c1', name: 'Колонка 1' }];
         }
         const name = ent.title || ent.name || tpl?.title || tplId;
         sheets.push({ key: tplId, name, columns });
       }
-      if (!sheets.length) sheets.push({ key: 'default', name: 'Default', columns: [{ id: 'c1', name: 'Колонка 1' }] });
+      if (!sheets.length) {
+        sheets.push({ key: 'default', name: 'Default', columns: [{ id: 'c1', name: 'Колонка 1' }] });
+      }
       return sheets;
     }
 
@@ -1848,7 +2832,6 @@ async function openTemplatesManager() {
                   for(const [tplId, patch] of Object.entries(patches)){
                     await sdo.journalTemplates.updateTemplate(tplId, patch);
                   }
-                  // Clear drafts
                   ctx.draft.journalTemplates = {};
                   ctx.setGlobalDirty(false);
                   uiToast?.success?.('Збережено') ?? uiToast?.show?.('Збережено');
@@ -1886,1601 +2869,6 @@ async function openTemplatesManager() {
         { label: 'Перенесення', description: 'Шаблони перенесення', onOpen: ()=> openTransferTemplatesScreen() },
       ]
     });
-  }
-
-  // -----------------------------
-  // Backup / Import / Export modal
-  // -----------------------------
-  function openBackupModal() {
-    const sdoInst = sdo || window.sdo;
-    if (!sdoInst) {
-      window.UI?.toast?.show?.('SDO instance not found (window.sdo)', { type: 'error' });
-      return;
-    }
-
-    // Use SettingsWindow (sws_v2) stack modal to avoid z-index/viewport issues
-    // that can make legacy modal dialogs appear "behind" the app.
-    if (!window.SettingsWindow || typeof window.SettingsWindow.openCustomRoot !== 'function') {
-      window.UI?.toast?.show?.('SettingsWindow (sws_v2) не ініціалізовано.', { type: 'error' });
-      return;
-    }
-
-    const getActiveJournalId = () => {
-      try {
-        return sdoInst.getState?.().activeJournalId || null;
-      } catch {
-        return null;
-      }
-    };
-
-    const getActiveJournalTitle = () => {
-      const st = sdoInst.getState?.() || {};
-      const id = st.activeJournalId;
-      const j = (st.journals || []).find((x) => x && x.id === id) || null;
-      return j?.title || j?.name || (id ? String(id) : '—');
-    };
-
-    // --- minimal ZIP (STORE) helpers ---
-    // Supports: a handful of files, ASCII names.
-    const enc = new TextEncoder();
-    const dec = new TextDecoder();
-
-    const crcTable = (() => {
-      const table = new Uint32Array(256);
-      for (let i = 0; i < 256; i++) {
-        let c = i;
-        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-        table[i] = c >>> 0;
-      }
-      return table;
-    })();
-    function crc32(u8) {
-      let c = 0xFFFFFFFF;
-      for (let i = 0; i < u8.length; i++) c = crcTable[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
-      return (c ^ 0xFFFFFFFF) >>> 0;
-    }
-    function u16(v) { const a = new Uint8Array(2); new DataView(a.buffer).setUint16(0, v, true); return a; }
-    function u32(v) { const a = new Uint8Array(4); new DataView(a.buffer).setUint32(0, v >>> 0, true); return a; }
-
-    function zipStore(files) {
-      // files: [{name, dataU8}]
-      let offset = 0;
-      const localParts = [];
-      const centralParts = [];
-
-      for (const f of files) {
-        const nameU8 = enc.encode(f.name);
-        const dataU8 = f.dataU8;
-        const crc = crc32(dataU8);
-
-        // Local file header
-        const local = [
-          u32(0x04034b50), // sig
-          u16(20), // ver
-          u16(0), // flags
-          u16(0), // method=store
-          u16(0), // mtime
-          u16(0), // mdate
-          u32(crc),
-          u32(dataU8.length),
-          u32(dataU8.length),
-          u16(nameU8.length),
-          u16(0),
-          nameU8,
-          dataU8,
-        ];
-        localParts.push(new Blob(local));
-
-        // Central directory header
-        const central = [
-          u32(0x02014b50),
-          u16(20),
-          u16(20),
-          u16(0),
-          u16(0),
-          u16(0),
-          u16(0),
-          u32(crc),
-          u32(dataU8.length),
-          u32(dataU8.length),
-          u16(nameU8.length),
-          u16(0),
-          u16(0),
-          u16(0),
-          u16(0),
-          u32(0),
-          u32(offset),
-          nameU8,
-        ];
-        centralParts.push(new Blob(central));
-
-        // Update offset by local header+name+data lengths
-        offset += 30 + nameU8.length + dataU8.length;
-      }
-
-      const centralSize = centralParts.reduce((sum, b) => sum + b.size, 0);
-      const centralOffset = offset;
-
-      const end = new Blob([
-        u32(0x06054b50),
-        u16(0),
-        u16(0),
-        u16(files.length),
-        u16(files.length),
-        u32(centralSize),
-        u32(centralOffset),
-        u16(0),
-      ]);
-
-      return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' });
-    }
-
-    async function unzipStoreGetFile(ab, wantedName) {
-      const u8 = new Uint8Array(ab);
-      // Find End of Central Directory signature from end
-      for (let i = u8.length - 22; i >= 0 && i >= u8.length - 66000; i--) {
-        if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) {
-          const dv = new DataView(u8.buffer, u8.byteOffset + i);
-          const cdSize = dv.getUint32(12, true);
-          const cdOff = dv.getUint32(16, true);
-          let p = cdOff;
-          const cdEnd = cdOff + cdSize;
-          while (p + 46 <= cdEnd) {
-            if (u8[p] !== 0x50 || u8[p + 1] !== 0x4b || u8[p + 2] !== 0x01 || u8[p + 3] !== 0x02) break;
-            const dvh = new DataView(u8.buffer, u8.byteOffset + p);
-            const nameLen = dvh.getUint16(28, true);
-            const extraLen = dvh.getUint16(30, true);
-            const commentLen = dvh.getUint16(32, true);
-            const lfhOff = dvh.getUint32(42, true);
-            const name = dec.decode(u8.slice(p + 46, p + 46 + nameLen));
-            if (name === wantedName) {
-              // Read local file header
-              const dvlfh = new DataView(u8.buffer, u8.byteOffset + lfhOff);
-              const lnameLen = dvlfh.getUint16(26, true);
-              const lextraLen = dvlfh.getUint16(28, true);
-              const compMethod = dvlfh.getUint16(8, true);
-              const compSize = dvlfh.getUint32(18, true);
-              const dataStart = lfhOff + 30 + lnameLen + lextraLen;
-              const data = u8.slice(dataStart, dataStart + compSize);
-              if (compMethod !== 0) throw new Error('ZIP: unsupported compression method');
-              return data;
-            }
-            p += 46 + nameLen + extraLen + commentLen;
-          }
-        }
-      }
-      return null;
-    }
-
-    function downloadBlob(blob, filename) {
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 0);
-    }
-
-    // Robust file picker.
-    // Key issue: on some platforms the native file dialog does NOT blur the document.
-    // If we auto-resolve on "hasFocus" polling, we may resolve NULL *before* the user picks a file.
-    // Strategy:
-    //  - Always resolve on input.onchange
-    //  - Additionally, resolve NULL only after we observed a blur (dialog likely opened)
-    //    and then focus was regained (dialog closed)
-    function pickFile({ accept }) {
-      return new Promise((resolve) => {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = accept || '*/*';
-        input.style.position = 'fixed';
-        input.style.left = '-10000px';
-        input.style.top = '0';
-        input.style.width = '1px';
-        input.style.height = '1px';
-        input.style.opacity = '0';
-        input.style.zIndex = '1000000';
-        document.body.appendChild(input);
-
-        let done = false;
-        let poll = null;
-        let sawBlur = false;
-        const onBlur = () => { sawBlur = true; };
-        // Use capture to catch blur even if focus is inside modals/overlays.
-        window.addEventListener('blur', onBlur, true);
-
-        const finish = async (file) => {
-          if (done) return;
-          done = true;
-          if (poll) { try { clearInterval(poll); } catch (_) {} poll = null; }
-          try { window.removeEventListener('blur', onBlur, true); } catch (_) {}
-          try { input.remove(); } catch (_) {}
-          resolve(file || null);
-        };
-
-        input.onchange = async () => {
-          const file = (input.files && input.files[0]) ? input.files[0] : null;
-          finish(file);
-        };
-
-        // Poll for focus regain + selection; this covers cases where 'focus' event doesn't fire.
-        poll = setInterval(() => {
-          if (done) return;
-          // Only consider auto-resolving after we saw a blur (dialog likely opened).
-          if (!sawBlur) return;
-          // If user is still in the dialog, document usually isn't focused.
-          if (!document.hasFocus()) return;
-          const file = (input.files && input.files[0]) ? input.files[0] : null;
-          // If dialog was closed, we will be focused again.
-          // Resolve with file if chosen, or null if canceled.
-          finish(file);
-        }, 200);
-
-        input.click();
-      });
-    }
-
-
-    async function forceTableRerender() {
-      if (typeof sdoInst?.commit !== 'function') return;
-      await sdoInst.commit((next) => {
-        next.activeSpaceId = next.activeSpaceId;
-        next.activeJournalId = next.activeJournalId;
-      }, []);
-    }
-
-    async function exportCurrentJournalJson() {
-      const id = getActiveJournalId();
-      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
-      const bundle = await sdoInst.api.tableStore.exportTableData({ journalIds: [id], includeFormatting: true });
-      const json = JSON.stringify(bundle, null, 2);
-      const fname = `journal_${getActiveJournalTitle()}_${new Date().toISOString().replace(/[:\.]/g, '-')}.json`;
-      downloadBlob(new Blob([json], { type: 'application/json' }), fname);
-      window.UI?.toast?.show?.('Експорт JSON виконано', { type: 'success' });
-    }
-
-    async function importCurrentJournalJson(mode = 'replace') {
-      const id = getActiveJournalId();
-      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
-      const file = await pickFile({ accept: 'application/json,.json' });
-      if (!file) return;
-      const text = await file.text();
-      let parsed;
-      try { parsed = JSON.parse(text); } catch { window.UI?.toast?.show?.('JSON пошкоджений', { type: 'error' }); return; }
-
-      // Force import into active journal: take the first dataset.
-      const ds0 = parsed?.datasets?.[0] || null;
-      const normalized = (parsed?.format === 'sdo-table-data') ? parsed : null;
-      let bundle = normalized;
-      if (!bundle && ds0) {
-        bundle = { format: 'sdo-table-data', formatVersion: 1, exportedAt: new Date().toISOString(), datasets: [ds0] };
-      }
-      if (!bundle || !Array.isArray(bundle.datasets) || bundle.datasets.length === 0) {
-        window.UI?.toast?.show?.('Невідомий формат JSON для таблиці', { type: 'error' });
-        return;
-      }
-      // Rewrite journalId
-      bundle.datasets = bundle.datasets.map((d) => ({ ...d, journalId: id }));
-
-      const res = await sdoInst.api.tableStore.importTableData(bundle, { mode });
-      if (res?.applied) {
-        await forceTableRerender();
-        const count = Array.isArray(res?.datasets) ? res.datasets.length : 0;
-        window.UI?.toast?.show?.(`Імпорт JSON виконано (${mode})${count ? `, datasets: ${count}` : ''}`, { type: 'success' });
-      }
-      else window.UI?.toast?.show?.(`Імпорт JSON не виконано: ${(res?.errors || []).join(', ')}`, { type: 'error' });
-    }
-
-    async function exportCurrentJournalXlsx(subrowsMode = 'subrow_per_row') {
-      const id = getActiveJournalId();
-      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
-      await sdoInst.exportXlsx({ journalIds: [id], filename: `journal_${getActiveJournalTitle()}`, subrowsMode });
-      window.UI?.toast?.show?.('Експорт XLSX виконано', { type: 'success' });
-    }
-
-    async function importCurrentJournalXlsx() {
-      const id = getActiveJournalId();
-      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
-      const file = await pickFile({ accept: '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      if (!file) return;
-
-      let res;
-      try {
-        // Import into current journal regardless of sheet names.
-        res = await sdoInst.importXlsx(file, { mode: 'merge', targetJournalId: id });
-      } catch (e) {
-        window.UI?.toast?.show?.('XLSX імпорт помилка: ' + (e?.message || e), { type: 'error' });
-        return;
-      }
-
-      await forceTableRerender();
-      const cnt = (res?.sheets || []).reduce((a, x) => a + (x?.imported || 0), 0);
-      window.UI?.toast?.show?.('Імпорт XLSX виконано' + (cnt ? (', рядків: ' + cnt) : ''), { type: 'success' });
-    }
-
-        // --- ZIP v2 backup: manifest + per-journal json files ---
-    function safeTs(ts = new Date()) {
-      return new Date(ts).toISOString().replace(/[:\.]/g, '-');
-    }
-
-    function computeDatasetStatsForBackup(dataset) {
-      const records = Array.isArray(dataset?.records) ? dataset.records : [];
-      const rowsCount = records.length;
-
-      let rowsWithSubrows = 0;
-      const dist = {};
-      const colSet = new Set();
-
-      for (const r of records) {
-        const cells = (r && typeof r.cells === 'object' && r.cells) ? r.cells : {};
-        for (const k of Object.keys(cells)) colSet.add(String(k));
-
-        const sub = Array.isArray(r?.subrows) ? r.subrows : [];
-        const n = sub.length;
-        dist[String(n)] = (dist[String(n)] || 0) + 1;
-        if (n > 0) rowsWithSubrows += 1;
-
-        for (const s of sub) {
-          const sc = (s && typeof s.cells === 'object' && s.cells) ? s.cells : {};
-          for (const k of Object.keys(sc)) colSet.add(String(k));
-        }
-      }
-
-      return {
-        columnsCount: colSet.size,
-        rowsCount,
-        rowsWithSubrows,
-        subrowsDistribution: dist
-      };
-    }
-
-    function buildJournalPathMap({ spaces, journals }) {
-      const spaceById = new Map((spaces || []).map((s) => [s.id, s]));
-      const journalById = new Map((journals || []).map((j) => [j.id, j]));
-
-      const memo = new Map();
-      function compute(jId) {
-        if (memo.has(jId)) return memo.get(jId);
-        const j = journalById.get(jId);
-        if (!j) return null;
-        const parentId = j.parentId;
-
-        const idx = (j.index != null && String(j.index).trim() !== '') ? String(j.index).trim() : (j.title || j.name || 'X');
-        if (spaceById.has(parentId)) {
-          memo.set(jId, idx);
-          return idx;
-        }
-        const p = compute(parentId);
-        const out = p ? `${p}.${idx}` : idx;
-        memo.set(jId, out);
-        return out;
-      }
-
-      const out = {};
-      for (const j of journals || []) {
-        if (!j?.id) continue;
-        out[j.id] = compute(j.id) || (j.index ? String(j.index) : String(j.id));
-      }
-      return out;
-    }
-
-    async function exportAllZip() {
-      const createdAt = new Date().toISOString();
-      const ts = safeTs(createdAt);
-
-      const bundle = await sdoInst.exportBackup({ scope: 'all', includeUserData: true });
-
-      // NOTE: bundle.core.navigation is a NAV PAYLOAD (spaces_nodes_v2/journals_nodes_v2), not the in-memory nav state.
-      // For export we must use the actual runtime state (single source of truth) to enumerate spaces/journals.
-      // Otherwise we export only structure (navigation payload) but miss journal datasets.
-      const navPayload = bundle?.core?.navigation || null;
-      const st0 = (sdoInst?.api?.getState && typeof sdoInst.api.getState === 'function') ? sdoInst.api.getState() : {};
-      const spaces = Array.isArray(st0.spaces) ? st0.spaces : [];
-      const journals = Array.isArray(st0.journals) ? st0.journals : [];
-
-      // --- Path helpers for ZIP v2 journal files (human readable, stable) ---
-      // IMPORTANT: numbering is computed from the tree order (like Transfer tree), not parsed from titles.
-      const spaceById = new Map(spaces.map((s) => [s.id, s]));
-      const journalById = new Map(journals.map((j) => [j.id, j]));
-
-      function translitUaToLat(s) {
-        const map = {
-          'а':'a','б':'b','в':'v','г':'h','ґ':'g','д':'d','е':'e','є':'ie','ж':'zh','з':'z','и':'y','і':'i','ї':'i','й':'i',
-          'к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ю':'iu','я':'ia',
-          'ь':'','ʼ':'','’':'','`':'','"':'',"\'":'',
-        };
-        return String(s ?? '').toLowerCase().split('').map((ch) => map.hasOwnProperty(ch) ? map[ch] : ch).join('');
-      }
-
-      function slugUa(s) {
-        const t = translitUaToLat(String(s ?? ''));
-        return t.replace(/[^a-z0-9]+/g, '').trim();
-      }
-
-      const buildSpaceSnapshotForExport = (spacesList) => {
-        const nodes = {};
-        const rootIds = [];
-        const list = Array.isArray(spacesList) ? spacesList.filter(Boolean) : [];
-        const meta = {};
-        for (const sp of list) {
-          nodes[sp.id] = { id: sp.id, title: sp.title || sp.name || sp.id, parentId: sp.parentId || null, children: [] };
-          meta[sp.id] = { createdAt: sp.createdAt || null, title: String(sp.title || sp.name || sp.id || '') };
-        }
-        for (const sp of list) {
-          const pid = sp.parentId || null;
-          if (pid && nodes[pid]) nodes[pid].children.push(sp.id);
-          else rootIds.push(sp.id);
-        }
-        // Stable numbering: order spaces by createdAt (ascending). Fallback to title.
-        const sortIds = (ids) => ids.sort((a, b) => {
-          const A = meta[a] || { createdAt: null, title: '' };
-          const B = meta[b] || { createdAt: null, title: '' };
-          const ca = A.createdAt ? Date.parse(A.createdAt) : NaN;
-          const cb = B.createdAt ? Date.parse(B.createdAt) : NaN;
-          const ha = Number.isFinite(ca);
-          const hb = Number.isFinite(cb);
-          if (ha && hb && ca !== cb) return ca - cb;
-          if (ha && !hb) return -1;
-          if (!ha && hb) return 1;
-          return String(A.title).localeCompare(String(B.title));
-        });
-        sortIds(rootIds);
-        for (const id of Object.keys(nodes)) sortIds(nodes[id].children);
-        return { nodes, rootIds };
-      };
-
-      const buildJournalSnapshotForSpace = (spaceId) => {
-        const nodes = {};
-        const topIds = [];
-        const list = Array.isArray(journals)
-          ? journals.filter((j) => j && j.spaceId === spaceId)
-          : [];
-        const meta = {};
-        for (const j of list) {
-          meta[j.id] = { idx: typeof j.index === 'number' ? j.index : 1e9, title: String(j.title || j.name || '') };
-          nodes[j.id] = { id: j.id, title: j.title || j.name || j.id, parentId: j.parentId || null, children: [] };
-        }
-        for (const j of list) {
-          const pid = j.parentId || spaceId;
-          if (nodes[pid]) nodes[pid].children.push(j.id);
-          else topIds.push(j.id);
-        }
-        const sortIds = (ids) => {
-          ids.sort((a, b) => {
-            const A = meta[a] || { idx: 1e9, title: '' };
-            const B = meta[b] || { idx: 1e9, title: '' };
-            if (A.idx !== B.idx) return A.idx - B.idx;
-            return A.title.localeCompare(B.title);
-          });
-        };
-        sortIds(topIds);
-        for (const id of Object.keys(nodes)) sortIds(nodes[id].children);
-        return { nodes, topIds };
-      };
-
-      const sSnapExp = buildSpaceSnapshotForExport(spaces);
-      const spaceNums = computeTreeNumbering(sSnapExp.rootIds, (id) => sSnapExp.nodes[id]?.children || []);
-      const journalNums = new Map();
-      for (const sp of spaces) {
-        if (!sp?.id) continue;
-        const jSnap = buildJournalSnapshotForSpace(sp.id);
-        const jMap = computeTreeNumbering(jSnap.topIds, (id) => jSnap.nodes[id]?.children || []);
-        for (const [jid, num] of jMap.entries()) journalNums.set(jid, num);
-      }
-
-      function findSpaceForJournal(journal) {
-        if (!journal) return null;
-        let pid = journal.parentId;
-        // Walk up journal parents until parentId is a space id.
-        while (pid && !spaceById.has(pid)) {
-          const pj = journalById.get(pid);
-          if (!pj) break;
-          pid = pj.parentId;
-        }
-        return pid && spaceById.has(pid) ? spaceById.get(pid) : null;
-      }
-
-      const journalTemplates = bundle?.modules?.['journal-templates']?.data?.templates || [];
-      const transferTemplates = bundle?.modules?.['transfer-templates']?.data?.templates || [];
-      const tableSettings = bundle?.modules?.['table-settings']?.data?.settings || {};
-      const coreSettings = bundle?.core?.settings?.coreSettings || {};
-      const tableData = bundle?.modules?.['table-datasets']?.data || { format: 'sdo-table-data', formatVersion: 1, datasets: [] };
-
-      const tplById = new Map(journalTemplates.map((t) => [t.id, t]));
-      const pathByJournalId = buildJournalPathMap({ spaces, journals });
-      const tableStore = sdoInst?.api?.tableStore || null;
-
-      const journalFiles = [];
-      const datasetByJournalId = new Map((tableData?.datasets || []).map((d) => [d.journalId, d]));
-
-      for (const j of journals) {
-        const space = findSpaceForJournal(j);
-        const sNum = (space && spaceNums.get(space.id)) ? spaceNums.get(space.id) : '0';
-        const jNum = journalNums.get(j.id) || '0';
-        const pathStr = `s${sNum}${slugUa(space?.title || space?.name || '')}/j${jNum}${slugUa(j.title || j.name || '')}`;
-        if (!j?.id) continue;
-        // Prefer single-source-of-truth: read dataset directly from tableStore for each journal.
-        // This avoids relying on tableStore:index (which may be incomplete in some edge cases).
-        let ds = null;
-        if (tableStore && typeof tableStore.getDataset === 'function') {
-          try { ds = await tableStore.getDataset(j.id); } catch { ds = null; }
-        }
-        if (!ds) ds = datasetByJournalId.get(j.id) || { journalId: j.id, records: [], meta: {} };
-        const st = computeDatasetStatsForBackup(ds);
-
-        const tpl = tplById.get(j.templateId) || null;
-        const templateName = tpl?.title || tpl?.name || tpl?.id || j.templateId || null;
-
-        const TABLE_SETTINGS_KEY = '@sdo/module-table-renderer:settings';
-        const perJournalSettings = tableSettings?.[`${TABLE_SETTINGS_KEY}:${j.id}`] ?? null;
-
-        const payload = {
-          format: 'sdo-journal',
-          version: 2,
-          createdAt,
-          meta: {
-            journalId: j.id,
-            spaceId: j.spaceId,
-            parentId: j.parentId,
-            title: j.title || j.name || null,
-            index: j.index ?? null,
-            path: pathStr,
-            templateId: j.templateId || null,
-            templateName,
-            columnsCount: st.columnsCount,
-            rowsCount: st.rowsCount,
-            rowsWithSubrows: st.rowsWithSubrows,
-            subrowsDistribution: st.subrowsDistribution,
-            exportedAt: createdAt,
-            // path is already set above
-          },
-          settings: {
-            tableRenderer: perJournalSettings
-          },
-          data: {
-            dataset: ds
-          }
-        };
-
-        const name = `journals/journal_${j.id}_${ts}.json`;
-        journalFiles.push({ name, dataU8: enc.encode(JSON.stringify(payload, null, 2)) });
-      }
-
-      const files = [];
-      const manifest = {
-        format: 'sdo-backup-zip',
-        version: 2,
-        createdAt,
-        app: bundle?.app || { name: '@sdo/core', version: 'unknown' },
-        mode: 'full',
-        contains: {
-          journals: true,
-          journalTemplates: true,
-          transferTemplates: true,
-          columnTypes: true,
-          settings: true,
-          navigation: true
-        },
-        files: {
-          manifest: 'manifest.json',
-          navigation: 'spaces/navigation.json',
-          journalTemplates: 'templates/journal_templates.json',
-          transferTemplates: 'templates/transfer_templates.json',
-          columnTypes: 'templates/column_types.json',
-          globalSettings: 'settings/global_settings.json',
-          journals: journalFiles.map((f) => f.name)
-        },
-        order: [
-          'journalTemplates',
-          'transferTemplates',
-          'columnTypes',
-          'settings',
-          'navigation',
-          'journalsData'
-        ]
-      };
-
-      files.push({ name: 'manifest.json', dataU8: enc.encode(JSON.stringify(manifest, null, 2)) });
-      files.push({ name: 'spaces/navigation.json', dataU8: enc.encode(JSON.stringify({ format: 'sdo-navigation', version: 1, createdAt, navigation: navPayload }, null, 2)) });
-      files.push({ name: 'templates/journal_templates.json', dataU8: enc.encode(JSON.stringify({ format: 'sdo-journal-templates', version: 1, createdAt, templates: journalTemplates }, null, 2)) });
-      files.push({ name: 'templates/transfer_templates.json', dataU8: enc.encode(JSON.stringify({ format: 'sdo-transfer-templates', version: 1, createdAt, templates: transferTemplates }, null, 2)) });
-      files.push({ name: 'templates/column_types.json', dataU8: enc.encode(JSON.stringify({ format: 'sdo-column-types', version: 1, createdAt, columnTypes: [] }, null, 2)) });
-      files.push({ name: 'settings/global_settings.json', dataU8: enc.encode(JSON.stringify({ format: 'sdo-settings', version: 1, createdAt, coreSettings, tableSettings }, null, 2)) });
-      files.push(...journalFiles);
-
-      const zipBlob = zipStore(files);
-      const fname = `backup_all_${ts}.zip`;
-      downloadBlob(zipBlob, fname);
-      window.UI?.toast?.show?.('Експорт ZIP (v2) виконано', { type: 'success' });
-    }
-
-    async function importAllZip(mode = 'replace') {
-      const file = await pickFile({ accept: '.zip,application/zip' });
-      if (!file) return;
-      const ab = await file.arrayBuffer();
-
-      const manifestU8 = await unzipStoreGetFile(ab, 'manifest.json');
-      if (!manifestU8) {
-        window.UI?.toast?.show?.('У ZIP відсутній manifest.json. Поки що імпорт без manifest не підтримується.', { type: 'error' });
-        return;
-      }
-
-      let manifest;
-      try { manifest = JSON.parse(dec.decode(manifestU8)); } catch {
-        window.UI?.toast?.show?.('manifest.json пошкоджений', { type: 'error' });
-        return;
-      }
-      if (manifest?.format !== 'sdo-backup-zip' || manifest?.version !== 2) {
-        window.UI?.toast?.show?.('Непідтримуваний формат manifest.json', { type: 'error' });
-        return;
-      }
-
-      if (mode !== 'replace' && mode !== 'merge') mode = 'replace';
-
-      if (mode === 'replace') {
-        try {
-          const items = (await sdoInst.api?.storage?.list?.('')) || [];
-          for (const it of items) {
-            if (it?.key) await sdoInst.api.storage.del(it.key);
-          }
-        } catch (e) {
-          window.UI?.toast?.show?.('Не вдалося очистити сховище: ' + (e?.message || e), { type: 'error' });
-          return;
-        }
-      }
-
-      const f = manifest.files || {};
-      const navPath = f.navigation || 'spaces/navigation.json';
-      const jtPath = f.journalTemplates || 'templates/journal_templates.json';
-      const ttPath = f.transferTemplates || 'templates/transfer_templates.json';
-      const gsPath = f.globalSettings || 'settings/global_settings.json';
-      const journalPaths = Array.isArray(f.journals) ? f.journals : [];
-
-      const getJson = async (path) => {
-        const u8 = await unzipStoreGetFile(ab, path);
-        if (!u8) throw new Error(`ZIP: missing file ${path}`);
-        return JSON.parse(dec.decode(u8));
-      };
-
-      let navJson, jtJson, ttJson, gsJson;
-      try {
-        navJson = await getJson(navPath);
-        jtJson = await getJson(jtPath);
-        ttJson = await getJson(ttPath);
-        gsJson = await getJson(gsPath);
-      } catch (e) {
-        window.UI?.toast?.show?.('ZIP імпорт помилка: ' + (e?.message || e), { type: 'error' });
-        return;
-      }
-
-      const backupBundle = {
-        format: 'sdo-backup',
-        formatVersion: 1,
-        backupId: crypto.randomUUID(),
-        createdAt: new Date().toISOString(),
-        app: manifest.app || { name: '@sdo/core', version: 'unknown' },
-        scope: 'all',
-        core: {
-          navigation: navJson?.navigation || navJson?.core?.navigation || navJson?.payload || navJson?.navigation,
-          settings: { coreSettings: gsJson?.coreSettings || {} }
-        },
-        modules: {},
-        userData: {},
-        integrity: null
-      };
-
-      backupBundle.modules['journal-templates'] = { moduleVersion: '0.1.0', data: { templates: jtJson?.templates || [] } };
-      backupBundle.modules['transfer-templates'] = { moduleVersion: '1.0.0', data: { templates: ttJson?.templates || [] } };
-      backupBundle.modules['table-settings'] = { moduleVersion: '1.0.0', data: { settings: gsJson?.tableSettings || {} } };
-
-      const datasets = [];
-      const existingTemplates = new Set((jtJson?.templates || []).map((t) => t?.id).filter(Boolean));
-
-      for (const p of journalPaths) {
-        let jdoc;
-        try { jdoc = await getJson(p); } catch (e) {
-          window.UI?.toast?.show?.('Помилка читання journal: ' + p, { type: 'error' });
-          return;
-        }
-        const meta = jdoc?.meta || {};
-        const ds = jdoc?.data?.dataset || null;
-        if (!ds?.journalId) continue;
-
-        const cols = Number(meta.columnsCount ?? 0);
-        const tplId = meta.templateId || null;
-
-        if (tplId && !existingTemplates.has(tplId)) {
-          const okCreate = await window.UI?.confirm?.('Імпорт ZIP', `Відсутній шаблон журналу "${tplId}". Створити?`, { okText: 'Створити', cancelText: 'Скасувати' });
-          if (!okCreate) {
-            window.UI?.toast?.show?.(`Імпорт скасовано: відсутній шаблон ${tplId}`, { type: 'error' });
-            return;
-          }
-          (jtJson.templates = jtJson.templates || []).push({ id: tplId, title: meta.templateName || tplId, columns: [] });
-          existingTemplates.add(tplId);
-          backupBundle.modules['journal-templates'].data.templates = jtJson.templates;
-        }
-
-        const tpl = (jtJson?.templates || []).find((t) => t?.id === tplId) || null;
-        const tplCols = Array.isArray(tpl?.columns) ? tpl.columns.length : null;
-        if (tplCols != null && cols && tplCols !== cols) {
-          const okContinue = await window.UI?.confirm?.('Імпорт ZIP', `Різна кількість колонок для шаблону "${tplId}": у файлі ${cols}, у шаблоні ${tplCols}. Продовжити?`, { okText: 'Так', cancelText: 'Ні' });
-          if (!okContinue) {
-            window.UI?.toast?.show?.('Імпорт скасовано через розбіжність колонок', { type: 'error' });
-            return;
-          }
-        }
-
-        datasets.push(ds);
-      }
-
-      backupBundle.modules['table-datasets'] = { moduleVersion: '1.0.0', data: { format: 'sdo-table-data', formatVersion: 1, exportedAt: new Date().toISOString(), datasets } };
-
-      try {
-        await sdoInst.importBackup(backupBundle, { mode, includeUserData: true });
-        // Ensure table datasets are applied even if backup provider path changes.
-        // Single source of truth: apply datasets through tableStore API.
-        try {
-          if (Array.isArray(datasets) && datasets.length && sdoInst?.api?.tableStore?.importTableData) {
-            await sdoInst.api.tableStore.importTableData({ format: 'sdo-table-data', formatVersion: 1, datasets }, { mode });
-          }
-        } catch (e2) {
-          console.warn('[ZIP v2] table datasets apply failed', e2);
-        }
-
-        await forceTableRerender();
-        window.UI?.toast?.show?.(`Імпорт ZIP (v2) виконано (${mode})`, { type: 'success' });
-      } catch (e) {
-        window.UI?.toast?.show?.(`Імпорт ZIP помилка: ${e.message || e}`, { type: 'error' });
-      }
-    }
-
-    // -----------------------------
-    // New SWS (stack) modal UI
-    // -----------------------------
-
-    const runAction = async (label, fn) => {
-      try {
-        await fn();
-      } catch (e) {
-        console.error('[Import/Export action failed]', label, e);
-        const msg = (e && (e.message || e.toString)) ? (e.message || String(e)) : String(e);
-        window.UI?.toast?.show?.(`${label}: помилка: ${msg}`, { type: 'error' });
-      }
-    };
-
-    const pushModeScreen = ({ title, subtitle, onRun }) => {
-      window.SettingsWindow.push({
-        title,
-        subtitle,
-        saveLabel: 'Назад',
-        onSave: () => window.SettingsWindow.pop(),
-        content: (ctx) => {
-          const ui = ctx.ui;
-          const wrap = ui.el('div', '');
-
-          wrap.appendChild(ui.card({
-            title,
-            description: 'Оберіть режим імпорту. Replace — повністю замінює. Merge — об’єднує/оновлює.',
-            children: []
-          }));
-
-          const row = ui.el('div', '');
-          row.style.display = 'flex';
-          row.style.gap = '10px';
-          row.style.marginTop = '10px';
-
-          const mk = (text, mode, primary) => {
-            const b = document.createElement('button');
-            b.className = primary ? 'sws-save' : 'sws-btn';
-            b.textContent = text;
-            b.style.flex = '1 1 0';
-            b.style.height = '54px';
-            b.style.borderRadius = '12px';
-            b.style.fontSize = '16px';
-            b.onclick = async () => {
-              b.disabled = true;
-              await runAction(`${title} (${mode})`, () => onRun(mode));
-              b.disabled = false;
-              window.SettingsWindow.close();
-            };
-            return b;
-          };
-
-          row.appendChild(mk('Replace', 'replace', true));
-          row.appendChild(mk('Merge', 'merge', false));
-          wrap.appendChild(row);
-          return wrap;
-        }
-      });
-    };
-
-    
-    const pushExcelImportScreen = () => {
-      window.SettingsWindow.push({
-        title: 'Імпорт Excel',
-        subtitle: 'XLSX → журнали',
-        saveLabel: 'Назад',
-        onSave: () => window.SettingsWindow.pop(),
-        content: (ctx) => {// fixed: SettingsWindow uses content
-
-          const ui = ctx.ui;
-          const wrap = ui.el('div', '');
-
-          const scopeRow = ui.el('div', '');
-          scopeRow.style.display = 'flex';
-          scopeRow.style.gap = '10px';
-          scopeRow.style.alignItems = 'center';
-
-          const scopeLabel = ui.el('div', '');
-          scopeLabel.textContent = 'Куди імпортувати:';
-          scopeLabel.style.minWidth = '150px';
-
-          const scopeSel = document.createElement('select');
-          scopeSel.className = 'sws-input';
-          const optSheets = document.createElement('option');
-          optSheets.value = 'sheets';
-          optSheets.textContent = 'По листах (створювати журнали)';
-          const optCurrent = document.createElement('option');
-          optCurrent.value = 'current';
-          optCurrent.textContent = 'Поточний журнал';
-          scopeSel.append(optSheets, optCurrent);
-
-          scopeRow.append(scopeLabel, scopeSel);
-
-          const modeRow = ui.el('div', '');
-          modeRow.style.display = 'flex';
-          modeRow.style.gap = '10px';
-          modeRow.style.alignItems = 'center';
-          const modeLabel = ui.el('div', '');
-          modeLabel.textContent = 'Режим:';
-          modeLabel.style.minWidth = '150px';
-          const modeSel = document.createElement('select');
-          modeSel.className = 'sws-input';
-          const m1 = document.createElement('option'); m1.value = 'merge'; m1.textContent = 'Додати/Оновити (merge)';
-          const m2 = document.createElement('option'); m2.value = 'replace'; m2.textContent = 'Замінити (replace)';
-          modeSel.append(m1, m2);
-          modeRow.append(modeLabel, modeSel);
-
-          const subrowsModeRow = ui.el('div', '');
-          subrowsModeRow.style.display = 'flex';
-          subrowsModeRow.style.gap = '10px';
-          subrowsModeRow.style.alignItems = 'center';
-          const subrowsModeLabel = ui.el('div', '');
-          subrowsModeLabel.textContent = 'Підстроки Excel:';
-          subrowsModeLabel.style.minWidth = '150px';
-          const subrowsModeSel = document.createElement('select');
-          subrowsModeSel.className = 'sws-input';
-          const sm0 = document.createElement('option'); sm0.value = 'auto'; sm0.textContent = 'Авто (якщо файл з СЕДО)';
-          const sm1 = document.createElement('option'); sm1.value = 'subrow_per_row'; sm1.textContent = 'Підстрока = нова строка (legacy)';
-          const sm2 = document.createElement('option'); sm2.value = 'row_with_subrows'; sm2.textContent = 'Строка з підстроками (\n в комірці)';
-          subrowsModeSel.append(sm0, sm1, sm2);
-          subrowsModeRow.append(subrowsModeLabel, subrowsModeSel);
-
-          const grid = ui.el('div', '');
-          grid.style.display = 'grid';
-          grid.style.gridTemplateColumns = '150px 1fr';
-          grid.style.gap = '10px';
-          grid.style.marginTop = '10px';
-
-          const mkNum = (label, def) => {
-            const l = ui.el('div', '');
-            l.textContent = label;
-            const inp = document.createElement('input');
-            inp.type = 'number';
-            inp.min = '1';
-            inp.value = String(def);
-            inp.className = 'sws-input';
-            grid.append(l, inp);
-            return inp;
-          };
-
-          const headerRowInp = mkNum('Рядок заголовків', 1);
-          const fromRowInp = mkNum('Почати з рядка', 2);
-          const toRowInp = mkNum('Закінчити на рядку', '');
-
-          // Action button
-          const runBtn = document.createElement('button');
-          runBtn.className = 'sws-save';
-          runBtn.textContent = 'Обрати XLSX і імпортувати';
-          runBtn.style.marginTop = '14px';
-          runBtn.style.height = '54px';
-          runBtn.style.borderRadius = '12px';
-          const status = ui.el('div', '');
-          status.style.marginTop = '10px';
-          status.style.fontSize = '14px';
-          status.style.opacity = '0.85';
-          
-// Hidden file input kept in DOM for Android WebView/Chrome stability
-const fileInp = document.createElement('input');
-fileInp.type = 'file';
-fileInp.accept = '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-fileInp.style.display = 'none';
-
-const startImport = async (file) => {
-  runBtn.disabled = true;
-  try {
-    if (!file) {
-      status.textContent = 'Файл не обрано.';
-      return;
-    }
-    status.textContent = 'Файл обрано: ' + (file.name || 'xlsx') + '. Читання...';
-
-    const headerRow = Number(headerRowInp.value || 1);
-    const fromRow = fromRowInp.value === '' ? undefined : Number(fromRowInp.value);
-    const toRow = toRowInp.value === '' ? undefined : Number(toRowInp.value);
-
-    const scope = scopeSel.value;
-    const mode = modeSel.value || 'merge';
-
-    const opts = { mode, headerRow, fromRow, toRow, subrowsMode: (subrowsModeSel.value || 'auto') };
-    if (scope === 'current') {
-      const id = getActiveJournalId();
-      if (!id) {
-        status.textContent = 'Помилка: не обрано активний журнал.';
-        try { window.alert('Не обрано журнал (activeJournalId пустий)'); } catch (_) {}
-        return;
-      }
-      opts.targetJournalId = id;
-    } else {
-      opts.createMissingJournals = true;
-    }
-
-    status.textContent = 'Імпорт... (це може зайняти час для великих файлів)';
-    const res = await sdoInst.importXlsx(file, opts);
-    status.textContent = 'Оновлення інтерфейсу...';
-    await forceTableRerender();
-    const cnt = (res?.sheets || []).reduce((a, x) => a + (x?.imported || 0), 0);
-    status.textContent = 'Готово. Рядків: ' + cnt;
-
-    try { window.UI?.toast?.show?.('Імпорт XLSX виконано' + (cnt ? (', рядків: ' + cnt) : ''), { type: 'success' }); } catch (_) {}
-    try { window.alert('Імпорт XLSX виконано' + (cnt ? ('\nРядків: ' + cnt) : '')); } catch (_) {}
-    window.SettingsWindow.close();
-  } catch (e) {
-    const msg = 'XLSX імпорт помилка: ' + (e?.message || e);
-    status.textContent = msg;
-    try { window.UI?.toast?.show?.(msg, { type: 'error' }); } catch (_) {}
-    try { window.alert(msg); } catch (_) {}
-  } finally {
-    runBtn.disabled = false;
-  }
-};
-
-// Button only opens picker; import runs in onchange (reliable for Android WebView)
-runBtn.onclick = () => {
-  status.textContent = 'Вибір файлу...';
-  try { fileInp.value = ''; } catch (_) {}
-  fileInp.click();
-};
-
-fileInp.onchange = () => {
-  const file = fileInp.files && fileInp.files[0] ? fileInp.files[0] : null;
-  startImport(file);
-};
-
-// ensure input stays in DOM
-wrap.appendChild(fileInp);
-
-wrap.appendChild(ui.card({
-            title: 'Параметри імпорту XLSX',
-            description: 'Підтримка Excel, де заголовки можуть бути не в 1-му рядку. Рядки вказуються як в Excel (1..n).',
-            children: []
-          }));
-
-          wrap.append(scopeRow, modeRow, subrowsModeRow, grid, runBtn, status);
-          return wrap;
-        }
-      });
-    };
-
-    const pushExcelExportScreen = () => {
-      window.SettingsWindow.push({
-        title: 'Експорт Excel',
-        subtitle: 'Журнал → XLSX',
-        saveLabel: 'Назад',
-        onSave: () => window.SettingsWindow.pop(),
-        content: (ctx) => {
-          const ui = ctx.ui;
-          const wrap = ui.el('div', '');
-
-          wrap.appendChild(ui.card({
-            title: 'Параметри експорту XLSX',
-            description: 'Оберіть модель підстрок. Новий режим зберігає 1:1 відповідність (рядок з підстроками → одна Excel-строка з переносами в комірці).',
-            children: []
-          }));
-
-          const subrowsModeRow = ui.el('div', '');
-          subrowsModeRow.style.display = 'flex';
-          subrowsModeRow.style.gap = '10px';
-          subrowsModeRow.style.alignItems = 'center';
-          subrowsModeRow.style.marginTop = '10px';
-
-          const subrowsModeLabel = ui.el('div', '');
-          subrowsModeLabel.textContent = 'Підстроки Excel:';
-          subrowsModeLabel.style.minWidth = '150px';
-
-          const subrowsModeSel = document.createElement('select');
-          subrowsModeSel.className = 'sws-input';
-          const sm1 = document.createElement('option'); sm1.value = 'subrow_per_row'; sm1.textContent = 'Підстрока = нова строка (legacy)';
-          const sm2 = document.createElement('option'); sm2.value = 'row_with_subrows'; sm2.textContent = 'Строка з підстроками (\n в комірці)';
-          subrowsModeSel.append(sm1, sm2);
-
-          subrowsModeRow.append(subrowsModeLabel, subrowsModeSel);
-
-          const runBtn = document.createElement('button');
-          runBtn.className = 'sws-save';
-          runBtn.textContent = 'Експортувати XLSX';
-          runBtn.style.marginTop = '14px';
-          runBtn.style.height = '54px';
-          runBtn.style.borderRadius = '12px';
-
-          const status = ui.el('div', '');
-          status.style.marginTop = '10px';
-          status.style.fontSize = '14px';
-          status.style.opacity = '0.85';
-
-          runBtn.onclick = async () => {
-            const id = getActiveJournalId();
-            if (!id) {
-              status.textContent = 'Помилка: не обрано активний журнал.';
-              try { window.alert('Не обрано журнал (activeJournalId пустий)'); } catch (_) {}
-              return;
-            }
-            const mode = subrowsModeSel.value || 'subrow_per_row';
-            status.textContent = 'Експорт...';
-            runBtn.disabled = true;
-            try {
-              await exportCurrentJournalXlsx(mode);
-              status.textContent = 'Готово.';
-              window.SettingsWindow.close();
-            } catch (e) {
-              status.textContent = 'Помилка: ' + (e?.message || e);
-              window.UI?.toast?.show?.('Експорт XLSX помилка: ' + (e?.message || e), { type: 'error' });
-            } finally {
-              runBtn.disabled = false;
-            }
-          };
-
-          wrap.append(subrowsModeRow, runBtn, status);
-          return wrap;
-        }
-      });
-    };
-
-
-
-// -----------------------------
-// ZIP / JSON import screens (event-driven file input, works in Android WebView)
-// -----------------------------
-
-// Debug modal for import stages (single place to understand why import didn't happen).
-const openImportStagesModal = ({ title = 'Import debug', steps = [], meta = {}, rawErrors = [] } = {}) => {
-  try {
-    if (!window?.UI?.modal?.open || typeof document === 'undefined') return;
-    const wrap = document.createElement('div');
-    wrap.className = 'ui-modal-content';
-
-    const h3 = document.createElement('h3');
-    h3.textContent = title;
-    h3.style.margin = '0 0 10px 0';
-
-    const ul = document.createElement('ul');
-    ul.style.margin = '0 0 10px 18px';
-    ul.style.padding = '0';
-
-    (steps || []).forEach((s) => {
-      const li = document.createElement('li');
-      li.textContent = `${s.ok ? '✅' : '❌'} ${s.stage}${s.msg ? `: ${s.msg}` : ''}`;
-      ul.appendChild(li);
-    });
-
-    const details = document.createElement('details');
-    details.style.marginTop = '8px';
-    const summary = document.createElement('summary');
-    summary.textContent = 'Деталі (errors/meta)';
-    summary.style.cursor = 'pointer';
-
-    const pre = document.createElement('pre');
-    pre.style.whiteSpace = 'pre-wrap';
-    pre.style.wordBreak = 'break-word';
-    pre.style.background = '#1111';
-    pre.style.padding = '8px';
-    pre.style.borderRadius = '8px';
-    pre.textContent = JSON.stringify({ rawErrors, meta }, null, 2);
-
-    details.appendChild(summary);
-    details.appendChild(pre);
-
-    wrap.appendChild(h3);
-    wrap.appendChild(ul);
-    wrap.appendChild(details);
-
-    window.UI.modal.open({ title: 'Import', contentNode: wrap, closeOnOverlay: true });
-  } catch (_) {
-    // no-op
-  }
-};
-
-const importAllZipFromFile = async (file, mode = 'replace', setStatus) => {
-  if (!file) { setStatus?.('Файл не обрано'); return; }
-  setStatus?.('Читання файлу...');
-  const ab = await file.arrayBuffer();
-
-  // ZIP v2 requires manifest.json. Old backup.json is NOT supported.
-  let manifestU8;
-  try {
-    manifestU8 = await unzipStoreGetFile(ab, 'manifest.json');
-  } catch (e) {
-    const msg = `ZIP помилка: ${e?.message || e}`;
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-    return;
-  }
-  if (!manifestU8) {
-    const msg = 'У ZIP відсутній manifest.json (старий формат backup.json не підтримується)';
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-    return;
-  }
-
-  let manifest;
-  try { manifest = JSON.parse(dec.decode(manifestU8)); } catch {
-    const msg = 'manifest.json пошкоджений';
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-    return;
-  }
-  if (manifest?.format !== 'sdo-backup-zip' || manifest?.version !== 2) {
-    const msg = 'Непідтримуваний формат manifest.json';
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-    return;
-  }
-
-  if (mode !== 'replace' && mode !== 'merge') mode = 'replace';
-
-  if (mode === 'replace') {
-    setStatus?.('Очищення сховища...');
-    try {
-      const items = (await sdoInst.api?.storage?.list?.('')) || [];
-      for (const it of items) {
-        if (it?.key) await sdoInst.api.storage.del(it.key);
-      }
-    } catch (e) {
-      const msg = 'Не вдалося очистити сховище: ' + (e?.message || e);
-      setStatus?.(msg);
-      window.UI?.toast?.show?.(msg, { type: 'error' });
-      return;
-    }
-  }
-
-  const f = manifest.files || {};
-  const navPath = f.navigation || 'spaces/navigation.json';
-  const jtPath = f.journalTemplates || 'templates/journal_templates.json';
-  const ttPath = f.transferTemplates || 'templates/transfer_templates.json';
-  const gsPath = f.globalSettings || 'settings/global_settings.json';
-  const journalPaths = Array.isArray(f.journals) ? f.journals : [];
-
-  const getJson = async (path) => {
-    const u8 = await unzipStoreGetFile(ab, path);
-    if (!u8) throw new Error(`ZIP: missing file ${path}`);
-    return JSON.parse(dec.decode(u8));
-  };
-
-  let navJson, jtJson, ttJson, gsJson;
-  try {
-    setStatus?.('Читання templates/settings/navigation...');
-    navJson = await getJson(navPath);
-    jtJson = await getJson(jtPath);
-    ttJson = await getJson(ttPath);
-    gsJson = await getJson(gsPath);
-  } catch (e) {
-    const msg = 'ZIP імпорт помилка: ' + (e?.message || e);
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-    return;
-  }
-
-  const backupBundle = {
-    format: 'sdo-backup',
-    formatVersion: 1,
-    backupId: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
-    app: manifest.app || { name: '@sdo/core', version: 'unknown' },
-    scope: 'all',
-    core: {
-      navigation: navJson?.navigation || navJson?.core?.navigation || navJson?.payload || navJson?.navigation,
-      settings: { coreSettings: gsJson?.coreSettings || {} }
-    },
-    modules: {},
-    userData: {},
-    integrity: null
-  };
-
-  backupBundle.modules['journal-templates'] = { moduleVersion: '0.1.0', data: { templates: jtJson?.templates || [] } };
-  backupBundle.modules['transfer-templates'] = { moduleVersion: '1.0.0', data: { templates: ttJson?.templates || [] } };
-  backupBundle.modules['table-settings'] = { moduleVersion: '1.0.0', data: { settings: gsJson?.tableSettings || {} } };
-
-  const datasets = [];
-  const existingTemplates = new Set((jtJson?.templates || []).map((t) => t?.id).filter(Boolean));
-
-  for (const p of journalPaths) {
-    let jdoc;
-    try { jdoc = await getJson(p); } catch (e) {
-      const msg = 'Помилка читання journal: ' + p;
-      setStatus?.(msg);
-      window.UI?.toast?.show?.(msg, { type: 'error' });
-      return;
-    }
-    const meta = jdoc?.meta || {};
-    const ds = jdoc?.data?.dataset || null;
-    if (!ds?.journalId) continue;
-
-    const cols = Number(meta.columnsCount ?? 0);
-    const tplId = meta.templateId || null;
-
-    if (tplId && !existingTemplates.has(tplId)) {
-      const okCreate = await window.UI?.confirm?.('Імпорт ZIP', `Відсутній шаблон журналу "${tplId}". Створити?`, { okText: 'Створити', cancelText: 'Скасувати' });
-      if (!okCreate) {
-        const msg = `Імпорт скасовано: відсутній шаблон ${tplId}`;
-        setStatus?.(msg);
-        window.UI?.toast?.show?.(msg, { type: 'error' });
-        return;
-      }
-      (jtJson.templates = jtJson.templates || []).push({ id: tplId, title: meta.templateName || tplId, columns: [] });
-      existingTemplates.add(tplId);
-      backupBundle.modules['journal-templates'].data.templates = jtJson.templates;
-    }
-
-    const tpl = (jtJson?.templates || []).find((t) => t?.id === tplId) || null;
-    const tplCols = Array.isArray(tpl?.columns) ? tpl.columns.length : null;
-    if (tplCols != null && cols && tplCols !== cols) {
-      const okContinue = await window.UI?.confirm?.('Імпорт ZIP', `Різна кількість колонок для шаблону "${tplId}": у файлі ${cols}, у шаблоні ${tplCols}. Продовжити?`, { okText: 'Так', cancelText: 'Ні' });
-      if (!okContinue) {
-        const msg = 'Імпорт скасовано через розбіжність колонок';
-        setStatus?.(msg);
-        window.UI?.toast?.show?.(msg, { type: 'error' });
-        return;
-      }
-    }
-
-    datasets.push(ds);
-  }
-
-  backupBundle.modules['table-datasets'] = { moduleVersion: '1.0.0', data: { format: 'sdo-table-data', formatVersion: 1, exportedAt: new Date().toISOString(), datasets } };
-
-  try {
-    setStatus?.('Імпорт...');
-    await sdoInst.importBackup(backupBundle, { mode, includeUserData: true });
-        // Ensure table datasets are applied even if backup provider path changes.
-        // Single source of truth: apply datasets through tableStore API.
-        try {
-          if (Array.isArray(datasets) && datasets.length && sdoInst?.api?.tableStore?.importTableData) {
-            await sdoInst.api.tableStore.importTableData({ format: 'sdo-table-data', formatVersion: 1, datasets }, { mode });
-          }
-        } catch (e2) {
-          console.warn('[ZIP v2] table datasets apply failed', e2);
-        }
-
-    await forceTableRerender();
-    const ok = `Імпорт ZIP (v2) виконано (${mode})`;
-    setStatus?.(ok);
-    window.UI?.toast?.show?.(ok, { type: 'success' });
-  } catch (e) {
-    const msg = `Імпорт ZIP помилка: ${e?.message || e}`;
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-  }
-};
-
-const importCurrentJournalJsonFromFile = async (file, mode = 'replace', setStatus) => {
-  const steps = [];
-  const id = getActiveJournalId();
-  if (!id) {
-    const msg = 'Не обрано журнал (activeJournalId пустий)';
-    steps.push({ stage: 'getActiveJournalId', ok: false, msg });
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'warning' });
-    openImportStagesModal({ title: 'Імпорт JSON (таблиця)', steps, meta: { mode } });
-    return;
-  }
-  steps.push({ stage: 'getActiveJournalId', ok: true, msg: id });
-  if (!file) { setStatus?.('Файл не обрано'); return; }
-
-  steps.push({ stage: 'pickFile', ok: true, msg: file.name });
-
-  setStatus?.('Читання файлу...');
-  const text = await file.text();
-  steps.push({ stage: 'readFile', ok: true, msg: `${text.length} bytes` });
-  let parsed;
-  try { parsed = JSON.parse(text); } catch {
-    const msg = 'JSON пошкоджений';
-    steps.push({ stage: 'JSON.parse', ok: false, msg });
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-    openImportStagesModal({ title: 'Імпорт JSON (таблиця)', steps, meta: { mode, file: file?.name } });
-    return;
-  }
-
-  steps.push({ stage: 'JSON.parse', ok: true });
-
-  const ds0 = parsed?.datasets?.[0] || null;
-  const normalized = (parsed?.format === 'sdo-table-data') ? parsed : null;
-  let bundle = normalized;
-  if (!bundle && ds0) {
-    bundle = { format: 'sdo-table-data', formatVersion: 1, exportedAt: new Date().toISOString(), datasets: [ds0] };
-  }
-  if (!bundle || !Array.isArray(bundle.datasets) || bundle.datasets.length === 0) {
-    const msg = 'Невідомий формат JSON для таблиці';
-    steps.push({ stage: 'normalize', ok: false, msg });
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-    openImportStagesModal({
-      title: 'Імпорт JSON (таблиця)',
-      steps,
-      meta: { mode, file: file?.name, detectedFormat: parsed?.format, hasDatasets: Array.isArray(parsed?.datasets) }
-    });
-    return;
-  }
-
-  steps.push({ stage: 'normalize', ok: true, msg: `datasets=${bundle.datasets.length}` });
-  bundle.datasets = bundle.datasets.map((d) => ({ ...d, journalId: id }));
-  steps.push({ stage: 'rewriteJournalId', ok: true });
-
-  try {
-    setStatus?.('Імпорт...');
-    const res = await sdoInst.api.tableStore.importTableData(bundle, { mode });
-    if (res?.applied) {
-      await forceTableRerender();
-      const ok = `Імпорт JSON виконано (${mode})`;
-      steps.push({ stage: 'importTableData', ok: true, msg: `datasets=${Array.isArray(res?.datasets) ? res.datasets.length : 0}` });
-      steps.push({ stage: 'rerender', ok: true });
-      setStatus?.(ok);
-      window.UI?.toast?.show?.(ok, { type: 'success' });
-      openImportStagesModal({ title: 'Імпорт JSON (таблиця) — OK', steps, meta: { mode, file: file?.name } });
-    } else {
-      const msg = `Імпорт JSON не виконано: ${(res?.errors || []).join(', ')}`;
-      steps.push({ stage: 'importTableData', ok: false, msg: (res?.errors || []).join(', ') || 'applied=false' });
-      setStatus?.(msg);
-      window.UI?.toast?.show?.(msg, { type: 'error' });
-      openImportStagesModal({ title: 'Імпорт JSON (таблиця)', steps, rawErrors: res?.errors, meta: { mode, file: file?.name } });
-    }
-  } catch (e) {
-    const msg = `Імпорт JSON помилка: ${e?.message || e}`;
-    steps.push({ stage: 'exception', ok: false, msg: e?.message || String(e) });
-    setStatus?.(msg);
-    window.UI?.toast?.show?.(msg, { type: 'error' });
-    openImportStagesModal({ title: 'Імпорт JSON (таблиця) — CRASH', steps, meta: { mode, file: file?.name } });
-  }
-};
-
-const pushZipImportScreen = () => {
-  window.SettingsWindow.push({
-    title: 'Імпорт ZIP',
-    subtitle: 'Всі журнали/шаблони',
-    saveLabel: 'Назад',
-    onSave: () => window.SettingsWindow.pop(),
-    content: (ctx) => {
-      const ui = ctx.ui;
-      const wrap = ui.el('div', '');
-
-      const status = ui.el('div', '');
-      status.style.marginTop = '10px';
-      status.style.fontSize = '14px';
-      status.style.opacity = '0.85';
-
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.zip,application/zip';
-      input.style.display = 'none';
-
-      let pendingMode = null;
-      const setStatus = (t) => { status.textContent = t || ''; };
-
-      input.onchange = async () => {
-        const file = input.files && input.files[0] ? input.files[0] : null;
-        if (!file) { setStatus('Файл не обрано'); pendingMode = null; return; }
-        const mode = pendingMode || 'replace';
-        pendingMode = null;
-        setStatus(`Файл обрано: ${file.name}`);
-        await importAllZipFromFile(file, mode, setStatus);
-      };
-
-      const row = ui.el('div', '');
-      row.style.display = 'flex';
-      row.style.gap = '10px';
-      row.style.marginTop = '10px';
-
-      const mk = (text, mode, primary) => {
-        const b = document.createElement('button');
-        b.className = primary ? 'sws-save' : 'sws-btn';
-        b.textContent = text;
-        b.style.flex = '1 1 0';
-        b.style.height = '54px';
-        b.style.borderRadius = '12px';
-        b.style.fontSize = '16px';
-        b.onclick = () => {
-          pendingMode = mode;
-          setStatus('Вибір файлу...');
-          input.value = '';
-          input.click();
-        };
-        return b;
-      };
-
-      wrap.appendChild(ui.card({
-        title: 'Імпорт ZIP',
-        description: 'Оберіть режим імпорту, потім виберіть файл backup_all_*.zip (формат v2: всередині manifest.json + journals/*.json).',
-        children: []
-      }));
-
-      row.appendChild(mk('Replace', 'replace', true));
-      row.appendChild(mk('Merge', 'merge', false));
-
-      wrap.appendChild(row);
-      wrap.appendChild(status);
-      wrap.appendChild(input);
-      return wrap;
-    }
-  });
-};
-
-const pushJsonImportScreen = () => {
-  window.SettingsWindow.push({
-    title: 'Імпорт JSON',
-    subtitle: 'Поточний журнал',
-    saveLabel: 'Назад',
-    onSave: () => window.SettingsWindow.pop(),
-    content: (ctx) => {
-      const ui = ctx.ui;
-      const wrap = ui.el('div', '');
-
-      const status = ui.el('div', '');
-      status.style.marginTop = '10px';
-      status.style.fontSize = '14px';
-      status.style.opacity = '0.85';
-
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = 'application/json,.json';
-      input.style.display = 'none';
-
-      let pendingMode = null;
-      const setStatus = (t) => { status.textContent = t || ''; };
-
-      input.onchange = async () => {
-        const file = input.files && input.files[0] ? input.files[0] : null;
-        if (!file) { setStatus('Файл не обрано'); pendingMode = null; return; }
-        const mode = pendingMode || 'replace';
-        pendingMode = null;
-        setStatus(`Файл обрано: ${file.name}`);
-        await importCurrentJournalJsonFromFile(file, mode, setStatus);
-      };
-
-      const row = ui.el('div', '');
-      row.style.display = 'flex';
-      row.style.gap = '10px';
-      row.style.marginTop = '10px';
-
-      const mk = (text, mode, primary) => {
-        const b = document.createElement('button');
-        b.className = primary ? 'sws-save' : 'sws-btn';
-        b.textContent = text;
-        b.style.flex = '1 1 0';
-        b.style.height = '54px';
-        b.style.borderRadius = '12px';
-        b.style.fontSize = '16px';
-        b.onclick = () => {
-          pendingMode = mode;
-          setStatus('Вибір файлу...');
-          input.value = '';
-          input.click();
-        };
-        return b;
-      };
-
-      wrap.appendChild(ui.card({
-        title: 'Імпорт JSON',
-        description: 'Оберіть режим імпорту, потім виберіть JSON (експортований з поточного журналу).',
-        children: []
-      }));
-
-      row.appendChild(mk('Replace', 'replace', true));
-      row.appendChild(mk('Merge', 'merge', false));
-
-      wrap.appendChild(row);
-      wrap.appendChild(status);
-      wrap.appendChild(input);
-      return wrap;
-    }
-  });
-};
-
-const pushRoot = () => {
-      window.SettingsWindow.push({
-        title: 'Імпорт / Експорт',
-        subtitle: `Поточний журнал: ${getActiveJournalTitle()}`,
-        saveLabel: 'Закрити',
-        onSave: () => window.SettingsWindow.close(),
-        content: (ctx) => {
-          const ui = ctx.ui;
-          const wrap = ui.el('div', '');
-
-          wrap.appendChild(ui.card({
-            title: 'Дії',
-            description: 'Ліва колонка — імпорт, права — експорт. 3 формати: ZIP / Excel / JSON.',
-            children: []
-          }));
-
-          const grid = ui.el('div', '');
-          grid.style.display = 'flex';
-          grid.style.flexDirection = 'column';
-          grid.style.gap = '10px';
-
-          const mkRow = (leftLabel, leftFn, rightLabel, rightFn) => {
-            const row = ui.el('div', '');
-            row.style.display = 'flex';
-            row.style.justifyContent = 'space-between';
-            row.style.gap = '10px';
-
-            const mkBtn = (label, fn, primary) => {
-              const b = document.createElement('button');
-              b.className = primary ? 'sws-save' : 'sws-btn';
-              b.textContent = label;
-              // requirement: 40% width each
-              b.style.width = '40%';
-              // requirement: comfy click height
-              b.style.height = '54px';
-              b.style.borderRadius = '12px';
-              b.style.fontSize = '16px';
-              b.style.whiteSpace = 'normal';
-              b.style.lineHeight = '1.2';
-              b.style.padding = '10px 12px';
-              b.onclick = async () => {
-                b.disabled = true;
-                await fn();
-                b.disabled = false;
-              };
-              return b;
-            };
-
-            row.appendChild(mkBtn(leftLabel, leftFn, true));
-            row.appendChild(mkBtn(rightLabel, rightFn, false));
-            return row;
-          };
-
-          // 1) ZIP (all)
-          grid.appendChild(mkRow(
-            'Імпорт ZIP',
-            async () => pushZipImportScreen(),
-            'Експорт ZIP',
-            async () => { await runAction('Експорт ZIP', exportAllZip); window.SettingsWindow.close(); }
-          ));
-
-          // 2) Excel (current journal)
-          grid.appendChild(mkRow(
-            'Імпорт Excel',
-            async () => pushExcelImportScreen(),
-            'Експорт Excel',
-            async () => pushExcelExportScreen()
-          ));
-
-          // 3) JSON (current journal)
-          grid.appendChild(mkRow(
-            'Імпорт JSON',
-            async () => pushJsonImportScreen(),
-            'Експорт JSON',
-            async () => { await runAction('Експорт JSON', exportCurrentJournalJson); window.SettingsWindow.close(); }
-          ));
-
-          wrap.appendChild(grid);
-          return wrap;
-        }
-      });
-    };
-
-    window.SettingsWindow.openCustomRoot(() => pushRoot());
   }
 
 
@@ -3969,39 +3357,97 @@ const pushRoot = () => {
 
     const journalCurrentBtn = h('button', {
       class: 'sdo-nav-btn sdo-nav-main is-active',
-      onClick: () => {
-        if (window.__SDO_IMPORT_BUSY__) {
-          window.UI?.toast?.show?.('Імпорт виконується… зачекай, будь ласка', { type: 'warning' });
-          return;
+      onClick: () => openTreePicker({
+        kind: 'Журнал',
+        getCurrent: () => {
+          const st = sdo.getState();
+          const cur = findById(st.journals, st.activeJournalId);
+          if (cur) return cur;
+          // fallback: first root journal in active space
+          return st.journals.find(j => j.spaceId === st.activeSpaceId && j.parentId === st.activeSpaceId) || null;
+        },
+        getSiblings: (cur) => {
+          const st = sdo.getState();
+          const pid = cur?.parentId ?? st.activeSpaceId;
+          return st.journals.filter(j => j.spaceId === st.activeSpaceId && (j.parentId ?? st.activeSpaceId) === pid);
+        },
+        getParent: (cur) => {
+          const st = sdo.getState();
+          if (!cur) return null;
+          if (!cur.parentId || cur.parentId === st.activeSpaceId) return null;
+          return st.journals.find(j => j.id === cur.parentId) || null;
+        },
+        getFirstChild: (cur) => {
+          const st = sdo.getState();
+          if (!cur?.id) return null;
+          return st.journals.find(j => j.spaceId === st.activeSpaceId && j.parentId === cur.id) || null;
+        },
+        getId: (item) => item.id,
+        getLabel: (item) => getJournalLabel(item),
+        noticeNoChildren: 'Цей журнал не має дочірніх журналів',
+        onSelect: async (item) => {
+          if (window.__SDO_IMPORT_BUSY__) {
+            window.UI?.toast?.show?.('Імпорт виконується… зачекай, будь ласка', { type: 'warning' });
+            return;
+          }
+          await sdo.commit((next) => {
+            next.activeJournalId = item.id;
+          }, ['nav_last_loc_v2']);
         }
-        try { openQuickNavRoot({ sdo }); } catch (e) { console.error(e); }
-      }
+      })
     }, [activeJournal ? getJournalLabel(activeJournal) : 'Додай журнал']);
 
     const journalChildrenBtn = h('button', {
       class: 'sdo-nav-btn sdo-nav-main is-adjacent',
       disabled: journalChildren.length > 0 ? null : 'disabled',
-      onClick: () => {
-        if (window.__SDO_IMPORT_BUSY__) {
-          window.UI?.toast?.show?.('Імпорт виконується… зачекай, будь ласка', { type: 'warning' });
-          return;
+      onClick: () => openTreePicker({
+        kind: 'Журнал',
+        getCurrent: () => {
+          const st = sdo.getState();
+          const act = findById(st.journals, st.activeJournalId);
+          const kids = st.journals.filter(j => j.spaceId === st.activeSpaceId && j.parentId === act?.id);
+          return kids[0] || null;
+        },
+        getSiblings: (cur) => {
+          const st = sdo.getState();
+          const pid = cur?.parentId ?? st.activeSpaceId;
+          return st.journals.filter(j => j.spaceId === st.activeSpaceId && (j.parentId ?? st.activeSpaceId) === pid);
+        },
+        getParent: (cur) => {
+          const st = sdo.getState();
+          if (!cur) return null;
+          if (!cur.parentId || cur.parentId === st.activeSpaceId) return null;
+          return st.journals.find(j => j.id === cur.parentId) || null;
+        },
+        getFirstChild: (cur) => {
+          const st = sdo.getState();
+          if (!cur?.id) return null;
+          return st.journals.find(j => j.spaceId === st.activeSpaceId && j.parentId === cur.id) || null;
+        },
+        getId: (item) => item.id,
+        getLabel: (item) => getJournalLabel(item),
+        noticeNoChildren: 'Цей журнал не має дочірніх журналів',
+        onSelect: async (item) => {
+          if (window.__SDO_IMPORT_BUSY__) {
+            window.UI?.toast?.show?.('Імпорт виконується… зачекай, будь ласка', { type: 'warning' });
+            return;
+          }
+          await sdo.commit((next) => {
+            next.activeJournalId = item.id;
+          }, ['nav_last_loc_v2']);
         }
-        try { openQuickNavRoot({ sdo }); } catch (e) { console.error(e); }
-      }
+      })
     }, [journalChildren[0] ? getJournalLabel(journalChildren[0]) : '—']);
 
     const journalPlusBtn = h('button', {
       class: 'sdo-nav-btn sdo-nav-plus',
       onClick: async () => {
-        if (window.__SDO_IMPORT_BUSY__) {
-          window.UI?.toast?.show?.('Імпорт виконується… зачекай, будь ласка', { type: 'warning' });
-          return;
-        }
-        try {
-          openQuickNavRoot({ sdo });
-        } catch (e) {
-          console.error(e);
-        }
+        // IMPORTANT: always read latest state on click (handlers can be stale between rerenders)
+        const stNow = sdo.getState();
+        if (!stNow.activeSpaceId) return;
+        const actJ = findById(stNow.journals, stNow.activeJournalId);
+        const parentId = actJ ? actJ.id : stNow.activeSpaceId;
+        await createJournalWithTemplate({ state: stNow, parentId, titlePrompt: actJ ? 'Піджурнал' : 'Вхідні поточні' });
       }
     }, ['+']);
 

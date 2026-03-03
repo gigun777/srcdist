@@ -32,7 +32,7 @@ export function createCommandsRegistry(getRuntimeCtx) {
         for (const id of ids) commands.delete(id);
       };
     },
-    run(commandId, args) {
+    async run(commandId, args) {
       const def = commands.get(commandId);
       if (!def) throw new Error(`Command not found: ${commandId}`);
       const runtime = getRuntimeCtx();

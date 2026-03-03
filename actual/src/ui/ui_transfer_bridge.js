@@ -469,7 +469,7 @@ export function attachTransferUI(ctx){
     const srcRow = rowArrayFromRecord(srcRecord, fromColKeys);
 
     // New Transfer Execute window (SettingsWindow v2 style)
-    if(SettingsWindow?.openRoot){
+    const openTransferSws = ()=>{
       // Filter templates by SOURCE JOURNAL TEMPLATE (preferred) or by SOURCE JOURNAL ID (legacy)
       const applicable = ensureArray(templates).filter(tpl => {
         const k = tpl?.fromSheetKey;
@@ -872,6 +872,30 @@ async function renderPreview(){
           SettingsWindow.close();
   }
 }));
+      return;
+    };
+
+    const adapter = UI?.swsAdapter ?? global?.SWSAdapter ?? null;
+    if(adapter && typeof adapter.open === 'function'){
+      const adapterOpenResult = adapter.open({
+        screenId: 'transfer.execute',
+        swsOpen: ()=> {
+          if(!SettingsWindow?.openRoot || !SettingsWindow?.openCustomRoot || !SettingsWindow?.push){
+            throw new Error('SettingsWindow SWS API is unavailable for transfer.execute');
+          }
+          return openTransferSws();
+        },
+        legacy: {
+          title: 'Копіювання',
+          contentNode: null,
+          closeOnOverlay: true
+        }
+      });
+      if(adapterOpenResult?.ok) return;
+    }
+
+    if(SettingsWindow?.openRoot){
+      openTransferSws();
       return;
     }
 
