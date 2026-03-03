@@ -573,6 +573,7 @@ const runInspectZip = async ()=>{
       const presetOpsRow = mkRow();
       const ioOpsRow = mkRow();
       const probeOpsRow = mkRow();
+      const scenarioOpsRow = mkRow();
 
       const mkHint = (text)=>{
         const hint = ui.el('div','', text);
@@ -771,6 +772,64 @@ const runInspectZip = async ()=>{
         }
       };
 
+      const scenarioManualBtn = ui.el('button','sws-btn', 'Run scenario: manual route check');
+      scenarioManualBtn.title = 'Sequence: Health + routes -> Get route -> Set route -> Probe open for current id.';
+      scenarioManualBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad) throw new Error('adapter unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const before = ad.getRoute(id);
+          ad.setRoute(id, routeSelect.value);
+          const after = ad.getRoute(id);
+          const probe = ad.open({
+            screenId: id,
+            sws: {
+              title: `Adapter probe: ${id}`,
+              subtitle: 'Scenario manual route check',
+              canSave: ()=>false,
+              saveLabel: null,
+              content: (ctx)=> ctx.ui.el('div','', `Scenario probe for ${id}`)
+            }
+          });
+          showState({
+            action: 'scenario.manual_route_check',
+            ok: true,
+            id,
+            routeBefore: before,
+            routeAfter: after,
+            probe
+          });
+        }catch(err){
+          showState({ action: 'scenario.manual_route_check', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const scenarioPresetBtn = ui.el('button','sws-btn', 'Run scenario: preset dry-run + apply');
+      scenarioPresetBtn.title = 'Sequence: List presets -> Preview preset -> Apply preset -> Health + routes.';
+      scenarioPresetBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad) throw new Error('adapter unavailable');
+          const preset = String(presetSelect.value || '').trim();
+          if(!preset) throw new Error('preset is empty');
+          const allPresets = ad.listPresets();
+          const preview = ad.getPreset(preset);
+          const applied = ad.applyPreset(preset);
+          showState({
+            action: 'scenario.preset_dryrun_apply',
+            ok: true,
+            preset,
+            allPresets,
+            preview,
+            applied
+          });
+        }catch(err){
+          showState({ action: 'scenario.preset_dryrun_apply', ok: false, error: err?.message || String(err) });
+        }
+      };
+
       routeOpsRow.appendChild(healthBtn);
       routeOpsRow.appendChild(getRouteBtn);
       routeOpsRow.appendChild(setRouteBtn);
@@ -786,6 +845,9 @@ const runInspectZip = async ()=>{
 
       probeOpsRow.appendChild(probeOpenBtn);
 
+      scenarioOpsRow.appendChild(scenarioManualBtn);
+      scenarioOpsRow.appendChild(scenarioPresetBtn);
+
       adapterCard.appendChild(adapterInfo);
       adapterCard.appendChild(adapterGuide);
       adapterCard.appendChild(idInput);
@@ -800,6 +862,8 @@ const runInspectZip = async ()=>{
       adapterCard.appendChild(ioOpsRow);
       adapterCard.appendChild(mkHint('Runtime verification:'));
       adapterCard.appendChild(probeOpsRow);
+      adapterCard.appendChild(mkHint('Guided scenarios (recommended combinations):'));
+      adapterCard.appendChild(scenarioOpsRow);
       adapterCard.appendChild(adapterOut);
       fillPresetOptions();
       showState();
