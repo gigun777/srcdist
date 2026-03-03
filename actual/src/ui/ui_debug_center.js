@@ -1040,6 +1040,74 @@ const runInspectZip = async ()=>{
       tableApiCard.appendChild(tableApiBtn);
       tableApiCard.appendChild(tableApiOut);
 
+      const verifyCard = section('Migration verification checklist');
+      const verifyGuide = ui.el('div','', [
+        'Use this before/after route or table probe changes:',
+        '1) Adapter API surface is present.',
+        '2) Table feature contracts are valid.',
+        '3) Table debug simulations run without errors.'
+      ].join('\n'));
+      verifyGuide.style.whiteSpace = 'pre-wrap';
+      verifyGuide.style.fontSize = '12px';
+      verifyGuide.style.opacity = '0.9';
+      verifyGuide.style.marginBottom = '8px';
+
+      const verifyOut = ui.el('pre','');
+      verifyOut.style.whiteSpace = 'pre-wrap';
+      verifyOut.style.maxHeight = '220px';
+      verifyOut.style.overflow = 'auto';
+
+      const verifyBtn = ui.el('button','sws-btn', 'Run verification checklist');
+      verifyBtn.title = 'Runs adapter/table checks and shows a structured readiness summary.';
+      verifyBtn.onclick = ()=>{
+        const ad = getAdapter();
+        const adapterChecks = {
+          hasAdapter: !!ad,
+          hasSetRoute: typeof ad?.setRoute === 'function',
+          hasGetRoute: typeof ad?.getRoute === 'function',
+          hasOpen: typeof ad?.open === 'function',
+          hasPresets: typeof ad?.listPresets === 'function' && typeof ad?.applyPreset === 'function'
+        };
+
+        const apis = listTableFeatureApis();
+        const tableContractChecks = {
+          count: apis.length,
+          allValid: apis.every((api)=> validateTableFeatureApi(api))
+        };
+
+        const probeChecks = [];
+        const probeList = [
+          ['table.edit.commit', ()=> featDebug.editCommit.simulate({ rowId:'row-check-1', colId:'col-check-1', newValue:'ok' })],
+          ['table.edit.cancel', ()=> featDebug.editCancel.simulate({ rowId:'row-check-1', colId:'col-check-1' })],
+          ['table.rerender.sync', ()=> featDebug.rerenderSync.simulate({ changedIds:['row-check-1'], anchorId:'row-check-1' })]
+        ];
+
+        for (const [id, run] of probeList) {
+          try{
+            const result = run();
+            probeChecks.push({ feature:id, ok: !!result?.result?.ok });
+          }catch(err){
+            probeChecks.push({ feature:id, ok:false, error: err?.message || String(err) });
+          }
+        }
+
+        const ok = Object.values(adapterChecks).every(Boolean)
+          && tableContractChecks.allValid
+          && probeChecks.every((x)=>x.ok === true);
+
+        verifyOut.textContent = safeStringify({
+          action:'migration_verification_checklist',
+          ok,
+          adapterChecks,
+          tableContractChecks,
+          probeChecks
+        });
+      };
+
+      verifyCard.appendChild(verifyGuide);
+      verifyCard.appendChild(verifyBtn);
+      verifyCard.appendChild(verifyOut);
+
       // Runtime loaded dist assets
       const assetsCard = section('Runtime loaded dist assets');
       const listWrap = ui.el('div','');
@@ -1097,6 +1165,8 @@ const runInspectZip = async ()=>{
       root.appendChild(zipCard);
       root.appendChild(adapterCard);
       root.appendChild(tableFeatCard);
+      root.appendChild(tableApiCard);
+      root.appendChild(verifyCard);
       root.appendChild(assetsCard);
       return root;
     },
