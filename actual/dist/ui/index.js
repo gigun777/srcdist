@@ -14,5 +14,5 @@ export * from './settings/settings_state.js';
 export * from './settings/features_table_settings.js';
 export * from './settings/features_uxui_settings.js';
 export * from './settings/features_backup_settings.js';
-// export of legacy settings shell modal removed
+export * from './settings/settings_shell_modal.js';
 export * from './settings/settings_init.js';
