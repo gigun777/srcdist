@@ -513,7 +513,7 @@ const runInspectZip = async ()=>{
 
       // Alternative A adapter controls (manual migration ops)
       const adapterCard = section('Alternative A adapter controls');
-      const adapterInfo = ui.el('div','', 'Set route per screen and inspect adapter health.');
+      const adapterInfo = ui.el('div','', 'Structured controls for route management, presets, import/export, and safe probe-open checks.');
       adapterInfo.style.marginBottom = '6px';
       const adapterOut = ui.el('pre','');
       adapterOut.style.whiteSpace = 'pre-wrap';
@@ -560,10 +560,40 @@ const runInspectZip = async ()=>{
         });
       };
 
-      const adapterBtnRow = ui.el('div','');
-      adapterBtnRow.style.display = 'flex';
-      adapterBtnRow.style.gap = '8px';
-      adapterBtnRow.style.flexWrap = 'wrap';
+      const mkRow = ()=>{
+        const row = ui.el('div','');
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+        row.style.flexWrap = 'wrap';
+        row.style.marginBottom = '6px';
+        return row;
+      };
+
+      const routeOpsRow = mkRow();
+      const presetOpsRow = mkRow();
+      const ioOpsRow = mkRow();
+      const probeOpsRow = mkRow();
+
+      const mkHint = (text)=>{
+        const hint = ui.el('div','', text);
+        hint.style.opacity = '0.8';
+        hint.style.fontSize = '12px';
+        hint.style.marginBottom = '4px';
+        return hint;
+      };
+
+      const adapterGuide = ui.el('div','');
+      adapterGuide.style.whiteSpace = 'pre-wrap';
+      adapterGuide.style.fontSize = '12px';
+      adapterGuide.style.opacity = '0.9';
+      adapterGuide.style.marginBottom = '8px';
+      adapterGuide.textContent = [
+        'Recommended button flows:',
+        '1) Health + routes → Get route → Set route (manual per-screen routing).',
+        '2) List presets → Preview preset → Apply preset (bulk routing with confirmation).',
+        '3) Export routes JSON before experiments, then Import routes JSON to restore.',
+        '4) After route change use Probe open (current id) to verify runtime channel.'
+      ].join('\n');
 
       const getAdapter = ()=> window.UI?.swsAdapter || window.SWSAdapter || null;
 
@@ -578,6 +608,7 @@ const runInspectZip = async ()=>{
       };
 
       const setRouteBtn = ui.el('button','sws-btn', 'Set route');
+      setRouteBtn.title = 'Use with Get route and Probe open: sets route for current screen id.';
       setRouteBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -592,6 +623,7 @@ const runInspectZip = async ()=>{
       };
 
       const getRouteBtn = ui.el('button','sws-btn', 'Get route');
+      getRouteBtn.title = 'Reads effective route for current screen id.';
       getRouteBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -606,9 +638,11 @@ const runInspectZip = async ()=>{
       };
 
       const healthBtn = ui.el('button','sws-btn', 'Health + routes');
+      healthBtn.title = 'Start here: shows adapter availability, health and full route map.';
       healthBtn.onclick = ()=>showState({ action: 'health' });
 
       const clearRouteBtn = ui.el('button','sws-btn', 'Clear route');
+      clearRouteBtn.title = 'Removes route override for current screen id (returns to default sws).';
       clearRouteBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -623,6 +657,7 @@ const runInspectZip = async ()=>{
       };
 
       const clearAllBtn = ui.el('button','sws-btn', 'Clear all routes');
+      clearAllBtn.title = 'Resets all route overrides; use Export routes JSON before this if you need rollback.';
       clearAllBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -635,6 +670,7 @@ const runInspectZip = async ()=>{
       };
 
       const exportRoutesBtn = ui.el('button','sws-btn', 'Export routes JSON');
+      exportRoutesBtn.title = 'Use before risky changes; pairs with Import routes JSON for restore.';
       exportRoutesBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -647,6 +683,7 @@ const runInspectZip = async ()=>{
       };
 
       const importRoutesBtn = ui.el('button','sws-btn', 'Import routes JSON');
+      importRoutesBtn.title = 'Restores route map from textarea JSON (usually after Export routes JSON).';
       importRoutesBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -660,6 +697,7 @@ const runInspectZip = async ()=>{
       };
 
       const listPresetsBtn = ui.el('button','sws-btn', 'List presets');
+      listPresetsBtn.title = 'Loads available preset names into selector.';
       listPresetsBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -673,6 +711,7 @@ const runInspectZip = async ()=>{
       };
 
       const previewPresetBtn = ui.el('button','sws-btn', 'Preview preset');
+      previewPresetBtn.title = 'Shows preset routes without mutating current route map.';
       previewPresetBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -687,6 +726,7 @@ const runInspectZip = async ()=>{
       };
 
       const applyPresetBtn = ui.el('button','sws-btn', 'Apply preset');
+      applyPresetBtn.title = 'Applies selected preset to route map; verify with Health + routes and Probe open.';
       applyPresetBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -702,6 +742,7 @@ const runInspectZip = async ()=>{
       };
 
       const probeOpenBtn = ui.el('button','sws-btn', 'Probe open (current id)');
+      probeOpenBtn.title = 'Runtime smoke check: opens probe screen using current route for current screen id.';
       probeOpenBtn.onclick = ()=>{
         try{
           const ad = getAdapter();
@@ -730,24 +771,35 @@ const runInspectZip = async ()=>{
         }
       };
 
-      adapterBtnRow.appendChild(setRouteBtn);
-      adapterBtnRow.appendChild(getRouteBtn);
-      adapterBtnRow.appendChild(clearRouteBtn);
-      adapterBtnRow.appendChild(clearAllBtn);
-      adapterBtnRow.appendChild(exportRoutesBtn);
-      adapterBtnRow.appendChild(importRoutesBtn);
-      adapterBtnRow.appendChild(listPresetsBtn);
-      adapterBtnRow.appendChild(previewPresetBtn);
-      adapterBtnRow.appendChild(applyPresetBtn);
-      adapterBtnRow.appendChild(probeOpenBtn);
-      adapterBtnRow.appendChild(healthBtn);
+      routeOpsRow.appendChild(healthBtn);
+      routeOpsRow.appendChild(getRouteBtn);
+      routeOpsRow.appendChild(setRouteBtn);
+      routeOpsRow.appendChild(clearRouteBtn);
+      routeOpsRow.appendChild(clearAllBtn);
+
+      presetOpsRow.appendChild(listPresetsBtn);
+      presetOpsRow.appendChild(previewPresetBtn);
+      presetOpsRow.appendChild(applyPresetBtn);
+
+      ioOpsRow.appendChild(exportRoutesBtn);
+      ioOpsRow.appendChild(importRoutesBtn);
+
+      probeOpsRow.appendChild(probeOpenBtn);
 
       adapterCard.appendChild(adapterInfo);
+      adapterCard.appendChild(adapterGuide);
       adapterCard.appendChild(idInput);
       adapterCard.appendChild(routeSelect);
       adapterCard.appendChild(presetSelect);
       adapterCard.appendChild(routesJson);
-      adapterCard.appendChild(adapterBtnRow);
+      adapterCard.appendChild(mkHint('Route controls (single screen):'));
+      adapterCard.appendChild(routeOpsRow);
+      adapterCard.appendChild(mkHint('Preset controls (bulk routes):'));
+      adapterCard.appendChild(presetOpsRow);
+      adapterCard.appendChild(mkHint('Backup / restore route map:'));
+      adapterCard.appendChild(ioOpsRow);
+      adapterCard.appendChild(mkHint('Runtime verification:'));
+      adapterCard.appendChild(probeOpsRow);
       adapterCard.appendChild(adapterOut);
       fillPresetOptions();
       showState();
