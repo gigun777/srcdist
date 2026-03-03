@@ -690,7 +690,7 @@ const runInspectZip = async ()=>{
 
       // Table feature debug probes (table-first architecture)
       const tableFeatCard = section('Table feature debug probes');
-      const tableFeatInfo = ui.el('div','', 'Run isolated table feature simulations (edit.commit / edit.cancel / rerender.sync).');
+      const tableFeatInfo = ui.el('div','', 'Run all isolated table feature simulations in one click (edit.commit / edit.cancel / rerender.sync).');
       tableFeatInfo.style.marginBottom = '6px';
       const tableFeatOut = ui.el('pre','');
       tableFeatOut.style.whiteSpace = 'pre-wrap';
@@ -719,25 +719,29 @@ const runInspectZip = async ()=>{
         }, 2);
       };
 
-      const runFeat = (id, fn)=>{
-        try{
-          const run = fn();
-          tableFeatOut.textContent = safeStringify({ feature:id, ok:true, result:run });
-        }catch(err){
-          tableFeatOut.textContent = safeStringify({ feature:id, ok:false, error: err?.message || String(err) });
+      const runAllFeat = ()=>{
+        const results = [];
+        const probes = [
+          ['table.edit.commit', ()=> featDebug.editCommit.simulate({ rowId:'row-probe-1', colId:'col-probe-1', newValue:'probe' })],
+          ['table.edit.cancel', ()=> featDebug.editCancel.simulate({ rowId:'row-probe-1', colId:'col-probe-1' })],
+          ['table.rerender.sync', ()=> featDebug.rerenderSync.simulate({ changedIds:['row-probe-1'], anchorId:'row-probe-1' })]
+        ];
+
+        for (const [id, runner] of probes) {
+          try{
+            results.push({ feature:id, ok:true, result:runner() });
+          }catch(err){
+            results.push({ feature:id, ok:false, error: err?.message || String(err) });
+          }
         }
+
+        tableFeatOut.textContent = safeStringify({ action:'run_all_table_features', results });
       };
 
-      const b1 = ui.el('button','sws-btn', 'Run edit.commit');
-      b1.onclick = ()=> runFeat('table.edit.commit', ()=> featDebug.editCommit.simulate({ rowId:'row-probe-1', colId:'col-probe-1', newValue:'probe' }));
-      const b2 = ui.el('button','sws-btn', 'Run edit.cancel');
-      b2.onclick = ()=> runFeat('table.edit.cancel', ()=> featDebug.editCancel.simulate({ rowId:'row-probe-1', colId:'col-probe-1' }));
-      const b3 = ui.el('button','sws-btn', 'Run rerender.sync');
-      b3.onclick = ()=> runFeat('table.rerender.sync', ()=> featDebug.rerenderSync.simulate({ changedIds:['row-probe-1'], anchorId:'row-probe-1' }));
+      const runAllBtn = ui.el('button','sws-btn', 'Run all table probes');
+      runAllBtn.onclick = ()=> runAllFeat();
 
-      tableFeatRow.appendChild(b1);
-      tableFeatRow.appendChild(b2);
-      tableFeatRow.appendChild(b3);
+      tableFeatRow.appendChild(runAllBtn);
       tableFeatCard.appendChild(tableFeatInfo);
       tableFeatCard.appendChild(tableFeatRow);
       tableFeatCard.appendChild(tableFeatOut);
