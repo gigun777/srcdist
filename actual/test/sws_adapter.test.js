@@ -165,3 +165,19 @@ test('sws adapter can preview preset routes without mutating adapter state', () 
   });
   assert.deepEqual(adapter.getRoutesSnapshot(), {});
 });
+
+
+test('sws adapter can describe all presets as cloned plain object', () => {
+  const adapter = createSwsAdapter({
+    getSettingsWindow: () => ({ push: () => {} }),
+    openLegacyModal: () => {}
+  });
+
+  const described = adapter.describePresets();
+  assert.deepEqual(Object.keys(described).sort(), ['modern_sws_core', 'safe_legacy_core']);
+  assert.equal(described.safe_legacy_core['transfer.execute'], 'legacy');
+
+  described.safe_legacy_core['transfer.execute'] = 'sws';
+  const describedAgain = adapter.describePresets();
+  assert.equal(describedAgain.safe_legacy_core['transfer.execute'], 'legacy');
+});
