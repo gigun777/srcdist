@@ -1054,6 +1054,7 @@ async function exportCurrentJournalJson() {
       downloadBlob(new Blob([json], { type: 'application/json' }), fname);
       window.UI?.toast?.show?.('Експорт JSON виконано', { type: 'success' });
     }
+    steps.push({ stage: 'getActiveJournalId', ok: true, msg: id });
 
     
 async function importCurrentJournalJson() {
