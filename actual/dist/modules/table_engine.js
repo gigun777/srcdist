@@ -196,9 +196,17 @@ function flattenRows({ index, settings, editState, visibleSet, sortIds }) {
     const record = index.recordById.get(rowId);
     if (!record) return;
 
-    // UI model: Subrows live under a technical (kind:'group') node and are rendered INSIDE cells,
-    // not as separate visible rows. Therefore we skip group nodes in the visible tree traversal.
     const allChildIds = sortIds(index.childrenById.get(rowId) ?? []).filter((childId) => visibleSet.has(childId));
+
+    // UI model: technical group nodes are not rendered as standalone rows.
+    // We still walk through them so their non-group descendants stay visible.
+    if (record.kind === 'group') {
+      for (const childId of allChildIds) {
+        walk(childId, depth);
+      }
+      return;
+    }
+
     const displayChildIds = allChildIds.filter((childId) => {
       const childRec = index.recordById.get(childId);
       return childRec?.kind !== 'group';
@@ -219,7 +227,7 @@ function flattenRows({ index, settings, editState, visibleSet, sortIds }) {
     });
 
     if (!isExpanded) return;
-    for (const childId of displayChildIds) {
+    for (const childId of allChildIds) {
       walk(childId, depth + 1);
     }
   };

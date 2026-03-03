@@ -1,0 +1,13 @@
+Step57 — Alternative A: валідація importRoutes payload
+
+Що зроблено:
+1) У `src/ui/sws_v2/sws_adapter.js` посилено валідацію `importRoutes`:
+   - масиви тепер не приймаються як валідний payload
+   - дозволений лише plain object
+
+2) У `test/sws_adapter.test.js` додано test-case:
+   - `importRoutes([])` -> throw
+   - `importRoutes(null)` -> throw
+
+Навіщо:
+- Захист від помилкового JSON формату під час ручного імпорту route map у Debug Center.
