@@ -1,0 +1,23 @@
+Step49 — Альтернатива A (Strangler + Adapter): старт імплементації
+
+Що зроблено в actual (мінімальний ризик):
+1) Додано модуль маршрутизації модальних каналів:
+   - `src/ui/sws_v2/sws_adapter.js`
+   - API: setRoute/getRoute/open/getHealth/getRoutesSnapshot
+   - За замовчуванням route = `sws`, із fallback в `legacy`.
+
+2) Підключено адаптер у bootstrap:
+   - `UI.swsAdapter` та глобально `window.SWSAdapter`.
+   - Це дає одну контрольовану точку для поступового переносу екранів.
+
+3) Debug Center health доповнено перевірками адаптера:
+   - наявність адаптера
+   - наявність API setRoute/open
+
+4) Додано unit tests:
+   - `test/sws_adapter.test.js`
+   - перевірки default SWS route, legacy route, error path без каналів.
+
+Що це дає для альтернативи A:
+- Реальний adapter layer вже існує.
+- Далі можна мігрувати екран-за-екраном (перемикаючи route), без Big-Bang.
