@@ -18,6 +18,21 @@ async function pathExists(target) {
   }
 }
 
+
+async function copyDirRecursive(srcDir, dstDir) {
+  const items = await fs.readdir(srcDir, { withFileTypes: true });
+  await fs.mkdir(dstDir, { recursive: true });
+  for (const item of items) {
+    const src = path.join(srcDir, item.name);
+    const dst = path.join(dstDir, item.name);
+    if (item.isDirectory()) {
+      await copyDirRecursive(src, dst);
+    } else {
+      await fs.copyFile(src, dst);
+    }
+  }
+}
+
 async function walkFiles(dir, acc = []) {
   const items = await fs.readdir(dir, { withFileTypes: true });
   for (const item of items) {
@@ -41,6 +56,13 @@ async function syncAlternativeAArtifacts() {
     await fs.copyFile(srcAdapter, distAdapter);
   }
 
+
+
+  const srcTable = path.join(projectRoot, 'src/table');
+  const distTable = path.join(projectRoot, 'dist/table');
+  if (await pathExists(srcTable)) {
+    await copyDirRecursive(srcTable, distTable);
+  }
 
   const srcDebugCenter = path.join(projectRoot, 'src/ui/ui_debug_center.js');
   const distDebugCenter = path.join(projectRoot, 'dist/ui/ui_debug_center.js');

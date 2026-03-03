@@ -8,6 +8,9 @@ import { runImportPipelineDryRunV2 } from '../backup_v2/backup_v2_import_pipelin
 import { buildWipePlanV2, executeWipeReplaceV2 } from '../backup_v2/backup_v2_wipe_core.js';
 import { applyImportZipV2 } from '../backup_v2/backup_v2_import_apply_core.js';
 import { resolveImportConfirmsV2, mergeSimulatedIssues } from '../backup_v2/backup_v2_confirm_core.js';
+import { createEditCommitDebugTools } from '../table/features/edit_commit/debug.js';
+import { createEditCancelDebugTools } from '../table/features/edit_cancel/debug.js';
+import { createRerenderSyncDebugTools } from '../table/features/rerender_sync/debug.js';
 
 export function openDebugCenter(){
   const SW = window.SettingsWindow;
@@ -684,6 +687,50 @@ const runInspectZip = async ()=>{
       adapterCard.appendChild(adapterOut);
       showState();
 
+
+      // Table feature debug probes (table-first architecture)
+      const tableFeatCard = section('Table feature debug probes');
+      const tableFeatInfo = ui.el('div','', 'Run isolated table feature simulations (edit.commit / edit.cancel / rerender.sync).');
+      tableFeatInfo.style.marginBottom = '6px';
+      const tableFeatOut = ui.el('pre','');
+      tableFeatOut.style.whiteSpace = 'pre-wrap';
+      tableFeatOut.style.maxHeight = '220px';
+      tableFeatOut.style.overflow = 'auto';
+
+      const featDebug = {
+        editCommit: createEditCommitDebugTools(),
+        editCancel: createEditCancelDebugTools(),
+        rerenderSync: createRerenderSyncDebugTools()
+      };
+
+      const tableFeatRow = ui.el('div','');
+      tableFeatRow.style.display = 'flex';
+      tableFeatRow.style.gap = '8px';
+      tableFeatRow.style.flexWrap = 'wrap';
+
+      const runFeat = (id, fn)=>{
+        try{
+          const run = fn();
+          tableFeatOut.textContent = JSON.stringify({ feature:id, ok:true, result:run }, null, 2);
+        }catch(err){
+          tableFeatOut.textContent = JSON.stringify({ feature:id, ok:false, error: err?.message || String(err) }, null, 2);
+        }
+      };
+
+      const b1 = ui.el('button','sws-btn', 'Run edit.commit');
+      b1.onclick = ()=> runFeat('table.edit.commit', ()=> featDebug.editCommit.simulate({ rowId:'row-probe-1', colId:'col-probe-1', newValue:'probe' }));
+      const b2 = ui.el('button','sws-btn', 'Run edit.cancel');
+      b2.onclick = ()=> runFeat('table.edit.cancel', ()=> featDebug.editCancel.simulate({ rowId:'row-probe-1', colId:'col-probe-1' }));
+      const b3 = ui.el('button','sws-btn', 'Run rerender.sync');
+      b3.onclick = ()=> runFeat('table.rerender.sync', ()=> featDebug.rerenderSync.simulate({ changedIds:['row-probe-1'], anchorId:'row-probe-1' }));
+
+      tableFeatRow.appendChild(b1);
+      tableFeatRow.appendChild(b2);
+      tableFeatRow.appendChild(b3);
+      tableFeatCard.appendChild(tableFeatInfo);
+      tableFeatCard.appendChild(tableFeatRow);
+      tableFeatCard.appendChild(tableFeatOut);
+
       // Runtime loaded dist assets
       const assetsCard = section('Runtime loaded dist assets');
       const listWrap = ui.el('div','');
@@ -740,6 +787,7 @@ const runInspectZip = async ()=>{
       root.appendChild(applyCard);
       root.appendChild(zipCard);
       root.appendChild(adapterCard);
+      root.appendChild(tableFeatCard);
       root.appendChild(assetsCard);
       return root;
     },
