@@ -57,6 +57,14 @@ export function createSwsAdapter(options = {}) {
     return Object.keys(DEFAULT_PRESETS);
   }
 
+
+  function getPreset(name) {
+    const presetName = String(name || '').trim();
+    const presetRoutes = DEFAULT_PRESETS[presetName];
+    if (!presetRoutes) throw new Error(`Unknown preset: ${presetName}`);
+    return JSON.parse(JSON.stringify(presetRoutes));
+  }
+
   function applyPreset(name, options = {}) {
     const presetName = String(name || '').trim();
     const presetRoutes = DEFAULT_PRESETS[presetName];
@@ -117,6 +125,7 @@ export function createSwsAdapter(options = {}) {
     exportRoutes,
     importRoutes,
     listPresets,
+    getPreset,
     applyPreset,
     open,
     getHealth,

@@ -146,3 +146,22 @@ test('sws adapter can apply route preset and reject unknown preset', () => {
 
   assert.throws(() => adapter.applyPreset('not_exists'), /Unknown preset/);
 });
+
+
+test('sws adapter can preview preset routes without mutating adapter state', () => {
+  const adapter = createSwsAdapter({
+    getSettingsWindow: () => ({ push: () => {} }),
+    openLegacyModal: () => {}
+  });
+
+  const before = adapter.getRoutesSnapshot();
+  const preset = adapter.getPreset('modern_sws_core');
+
+  assert.deepEqual(before, {});
+  assert.deepEqual(preset, {
+    'transfer.execute': 'sws',
+    'backup.import': 'sws',
+    'debug.center': 'sws'
+  });
+  assert.deepEqual(adapter.getRoutesSnapshot(), {});
+});

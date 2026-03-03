@@ -672,6 +672,20 @@ const runInspectZip = async ()=>{
         }
       };
 
+      const previewPresetBtn = ui.el('button','sws-btn', 'Preview preset');
+      previewPresetBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.getPreset !== 'function') throw new Error('adapter.getPreset unavailable');
+          const preset = String(presetSelect.value || '').trim();
+          if(!preset) throw new Error('preset is empty');
+          const routes = ad.getPreset(preset);
+          showState({ action: 'previewPreset', ok: true, preset, routes });
+        }catch(err){
+          showState({ action: 'previewPreset', ok: false, error: err?.message || String(err) });
+        }
+      };
+
       const applyPresetBtn = ui.el('button','sws-btn', 'Apply preset');
       applyPresetBtn.onclick = ()=>{
         try{
@@ -723,6 +737,7 @@ const runInspectZip = async ()=>{
       adapterBtnRow.appendChild(exportRoutesBtn);
       adapterBtnRow.appendChild(importRoutesBtn);
       adapterBtnRow.appendChild(listPresetsBtn);
+      adapterBtnRow.appendChild(previewPresetBtn);
       adapterBtnRow.appendChild(applyPresetBtn);
       adapterBtnRow.appendChild(probeOpenBtn);
       adapterBtnRow.appendChild(healthBtn);
