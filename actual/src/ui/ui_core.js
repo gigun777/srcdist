@@ -1751,11 +1751,35 @@ async function importCurrentJournalJson() {
 
     body.append(title, grid, hr, zipRow);
 
-    window.UI?.modal?.open?.({
+    const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+    const legacyPayload = {
       title: 'Backup',
       contentNode: body,
       closeOnOverlay: true,
-    });
+    };
+
+    if (adapter && typeof adapter.open === 'function') {
+      const adapterResult = adapter.open({
+        screenId: 'backup.manager',
+        swsOpen: () => {
+          const SW = window.SettingsWindow;
+          if (!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function') {
+            throw new Error('Backup SWS dependencies are unavailable');
+          }
+          SW.openCustomRoot(() => SW.push({
+            title: 'Backup',
+            subtitle: `Поточний журнал: ${getActiveJournalTitle()}`,
+            content: body,
+            saveLabel: 'OK',
+            canSave: () => false,
+          }));
+        },
+        legacy: legacyPayload,
+      });
+      if (adapterResult?.ok) return;
+    }
+
+    window.UI?.modal?.open?.(legacyPayload);
   }
 
 

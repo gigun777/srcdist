@@ -9,7 +9,8 @@ const DEFAULT_PRESETS = Object.freeze({
     'transfer.execute': 'sws',
     'backup.import': 'sws',
     'debug.center': 'sws',
-    'quicknav.root': 'sws'
+    'quicknav.root': 'sws',
+    'backup.manager': 'sws'
   })
 });
 
