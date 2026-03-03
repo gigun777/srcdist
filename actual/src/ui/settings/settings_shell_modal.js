@@ -19,7 +19,17 @@ export function openSettingsShellModal(options = {}) {
   const { UI, adapter } = resolveRuntime();
 
   if (adapter && typeof adapter.open === 'function') {
-    return adapter.open('settings', options);
+    return adapter.open({
+      screenId: 'settings.shell',
+      swsOpen: options?.swsOpen,
+      sws: options?.sws,
+      legacy: {
+        title: options?.title ?? 'Settings',
+        contentNode: options?.contentNode ?? null,
+        closeOnOverlay: true,
+        escClose: true
+      }
+    });
   }
 
   if (UI?.settings && typeof UI.settings.openModal === 'function') {
