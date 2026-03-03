@@ -29,6 +29,7 @@ import "./settings/settings_registry.js";
 import "./settings/settings_state.js";
 // Legacy settings shell modal removed (SWS v2 is the only settings UI)
 import "./settings/settings_init.js";
+import { createSwsAdapter } from "./sws_v2/sws_adapter.js";
 
 /**
  * @typedef {{getItem:(k:string)=>string|null, setItem:(k:string,v:string)=>void}} StorageAdapter
@@ -68,6 +69,21 @@ export async function bootstrap(options = {}) {
       if (tryAttachTransfer() || attempts > 50) clearInterval(t);
     }, 100);
   }
+
+
+  // Strangler Adapter (Alternative A): one router for old/new modal channels.
+  const swsAdapter = createSwsAdapter({
+    getSettingsWindow: () => global.SettingsWindow || null,
+    openLegacyModal: (legacyPayload) => {
+      const modal = global.UI?.modal;
+      if (!modal || typeof modal.open !== 'function') {
+        throw new Error('Legacy modal channel is unavailable (UI.modal.open missing)');
+      }
+      return modal.open(legacyPayload);
+    }
+  });
+  UI.swsAdapter = swsAdapter;
+  global.SWSAdapter = swsAdapter;
 
   // 1) Settings init (register default features once)
   if (UI.settings && typeof UI.settings.init === "function") {
