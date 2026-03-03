@@ -1,0 +1,17 @@
+Step59 — Table function standard: second feature module (edit.cancel)
+
+Що зроблено:
+1) Створено другу ізольовану table-функцію:
+   - `src/table/features/edit_cancel/feature.js`
+   - `src/table/features/edit_cancel/pipes.js`
+   - `src/table/features/edit_cancel/api.js`
+   - `src/table/features/edit_cancel/debug.js`
+   - `src/table/features/edit_cancel/README.md`
+
+2) Додано тести:
+   - `test/table_feature_edit_cancel.test.js`
+   - перевірка pipes validation, run output, api contract, debug simulate
+
+Навіщо:
+- Закріпити інваріант Cancel (Esc без commit) як окремий модульний контракт.
+- Продовжити перехід до table-first архітектури з debug-контролем кожної функції.
