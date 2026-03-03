@@ -8,13 +8,13 @@ import { runImportPipelineDryRunV2 } from '../backup_v2/backup_v2_import_pipelin
 import { buildWipePlanV2, executeWipeReplaceV2 } from '../backup_v2/backup_v2_wipe_core.js';
 import { applyImportZipV2 } from '../backup_v2/backup_v2_import_apply_core.js';
 import { resolveImportConfirmsV2, mergeSimulatedIssues } from '../backup_v2/backup_v2_confirm_core.js';
+import { createEditCommitDebugTools } from '../table/features/edit_commit/debug.js';
+import { createEditCancelDebugTools } from '../table/features/edit_cancel/debug.js';
+import { createRerenderSyncDebugTools } from '../table/features/rerender_sync/debug.js';
+import { listTableFeatureApis, validateTableFeatureApi } from '../table/core/table_feature_registry.js';
 
 export function openDebugCenter(){
   const SW = window.SettingsWindow;
-  if(!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function'){
-    try{ window.UI?.toast?.show?.('Debug Center недоступний (SettingsWindow не ініціалізовано)', { type:'warning' }); }catch(_){ /* ignore */ }
-    return;
-  }
 
   const buildScreen = ()=> ({
     title: 'Debug Center',
@@ -57,6 +57,9 @@ export function openDebugCenter(){
       push('SettingsWindow available', !!window.SettingsWindow);
       push('UI.toast available', !!(window.UI?.toast?.show));
       push('UI.modal available', !!(window.UI?.modal?.open));
+      push('SWS adapter available (Alternative A)', !!(window.UI?.swsAdapter));
+      push('SWS adapter route API', typeof window.UI?.swsAdapter?.setRoute === 'function');
+      push('SWS adapter open API', typeof window.UI?.swsAdapter?.open === 'function');
       push('SWS ui primitives (ctx.ui.el) available', !!(ctx?.ui?.el));
 
       // SDO / API
@@ -508,6 +511,457 @@ const runInspectZip = async ()=>{
       zipCard.appendChild(zipBtn);
       zipCard.appendChild(zipPre);
 
+      // Alternative A adapter controls (manual migration ops)
+      const adapterCard = section('Alternative A adapter controls');
+      const adapterInfo = ui.el('div','', 'Structured controls for route management, presets, import/export, and safe probe-open checks.');
+      adapterInfo.style.marginBottom = '6px';
+      const adapterOut = ui.el('pre','');
+      adapterOut.style.whiteSpace = 'pre-wrap';
+      adapterOut.style.maxHeight = '220px';
+      adapterOut.style.overflow = 'auto';
+
+      const routesJson = document.createElement('textarea');
+      routesJson.placeholder = '{"debug.center":"sws"}';
+      routesJson.style.width = '100%';
+      routesJson.style.minHeight = '72px';
+      routesJson.style.marginBottom = '8px';
+
+      const idInput = document.createElement('input');
+      idInput.type = 'text';
+      idInput.value = 'debug.center';
+      idInput.placeholder = 'screen id (e.g. debug.center)';
+      idInput.style.width = '100%';
+      idInput.style.marginBottom = '6px';
+
+      const routeSelect = document.createElement('select');
+      routeSelect.style.width = '100%';
+      routeSelect.style.marginBottom = '8px';
+      ['sws', 'legacy'].forEach((r)=>{
+        const opt = document.createElement('option');
+        opt.value = r;
+        opt.textContent = r;
+        routeSelect.appendChild(opt);
+      });
+
+      const presetSelect = document.createElement('select');
+      presetSelect.style.width = '100%';
+      presetSelect.style.marginBottom = '8px';
+
+      const fillPresetOptions = ()=>{
+        presetSelect.innerHTML = '';
+        const ad = getAdapter();
+        const presets = ad?.listPresets?.() || [];
+        const all = ['(select preset)', ...presets];
+        all.forEach((name, idx)=>{
+          const opt = document.createElement('option');
+          opt.value = idx === 0 ? '' : name;
+          opt.textContent = name;
+          presetSelect.appendChild(opt);
+        });
+      };
+
+      const mkRow = ()=>{
+        const row = ui.el('div','');
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+        row.style.flexWrap = 'wrap';
+        row.style.marginBottom = '6px';
+        return row;
+      };
+
+      const routeOpsRow = mkRow();
+      const presetOpsRow = mkRow();
+      const ioOpsRow = mkRow();
+      const probeOpsRow = mkRow();
+      const scenarioOpsRow = mkRow();
+
+      const mkHint = (text)=>{
+        const hint = ui.el('div','', text);
+        hint.style.opacity = '0.8';
+        hint.style.fontSize = '12px';
+        hint.style.marginBottom = '4px';
+        return hint;
+      };
+
+      const adapterGuide = ui.el('div','');
+      adapterGuide.style.whiteSpace = 'pre-wrap';
+      adapterGuide.style.fontSize = '12px';
+      adapterGuide.style.opacity = '0.9';
+      adapterGuide.style.marginBottom = '8px';
+      adapterGuide.textContent = [
+        'Recommended button flows:',
+        '1) Health + routes → Get route → Set route (manual per-screen routing).',
+        '2) List presets → Preview preset → Apply preset (bulk routing with confirmation).',
+        '3) Export routes JSON before experiments, then Import routes JSON to restore.',
+        '4) After route change use Probe open (current id) to verify runtime channel.'
+      ].join('\n');
+
+      const getAdapter = ()=> window.UI?.swsAdapter || window.SWSAdapter || null;
+
+      const showState = (extra = {})=>{
+        const ad = getAdapter();
+        adapterOut.textContent = JSON.stringify({
+          hasAdapter: !!ad,
+          health: ad?.getHealth?.() || null,
+          routes: ad?.getRoutesSnapshot?.() || null,
+          ...extra
+        }, null, 2);
+      };
+
+      const setRouteBtn = ui.el('button','sws-btn', 'Set route');
+      setRouteBtn.title = 'Use with Get route and Probe open: sets route for current screen id.';
+      setRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.setRoute !== 'function') throw new Error('adapter.setRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          ad.setRoute(id, routeSelect.value);
+          showState({ action: 'setRoute', id, route: routeSelect.value, ok: true });
+        }catch(err){
+          showState({ action: 'setRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const getRouteBtn = ui.el('button','sws-btn', 'Get route');
+      getRouteBtn.title = 'Reads effective route for current screen id.';
+      getRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.getRoute !== 'function') throw new Error('adapter.getRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const route = ad.getRoute(id);
+          showState({ action: 'getRoute', id, route, ok: true });
+        }catch(err){
+          showState({ action: 'getRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const healthBtn = ui.el('button','sws-btn', 'Health + routes');
+      healthBtn.title = 'Start here: shows adapter availability, health and full route map.';
+      healthBtn.onclick = ()=>showState({ action: 'health' });
+
+      const clearRouteBtn = ui.el('button','sws-btn', 'Clear route');
+      clearRouteBtn.title = 'Removes route override for current screen id (returns to default sws).';
+      clearRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.clearRoute !== 'function') throw new Error('adapter.clearRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const removed = ad.clearRoute(id);
+          showState({ action: 'clearRoute', id, removed, ok: true });
+        }catch(err){
+          showState({ action: 'clearRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const clearAllBtn = ui.el('button','sws-btn', 'Clear all routes');
+      clearAllBtn.title = 'Resets all route overrides; use Export routes JSON before this if you need rollback.';
+      clearAllBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.clearAllRoutes !== 'function') throw new Error('adapter.clearAllRoutes unavailable');
+          ad.clearAllRoutes();
+          showState({ action: 'clearAllRoutes', ok: true });
+        }catch(err){
+          showState({ action: 'clearAllRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const exportRoutesBtn = ui.el('button','sws-btn', 'Export routes JSON');
+      exportRoutesBtn.title = 'Use before risky changes; pairs with Import routes JSON for restore.';
+      exportRoutesBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.exportRoutes !== 'function') throw new Error('adapter.exportRoutes unavailable');
+          routesJson.value = JSON.stringify(ad.exportRoutes(), null, 2);
+          showState({ action: 'exportRoutes', ok: true });
+        }catch(err){
+          showState({ action: 'exportRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const importRoutesBtn = ui.el('button','sws-btn', 'Import routes JSON');
+      importRoutesBtn.title = 'Restores route map from textarea JSON (usually after Export routes JSON).';
+      importRoutesBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.importRoutes !== 'function') throw new Error('adapter.importRoutes unavailable');
+          const parsed = JSON.parse(String(routesJson.value || '{}'));
+          const count = ad.importRoutes(parsed, { replace: true });
+          showState({ action: 'importRoutes', ok: true, imported: count });
+        }catch(err){
+          showState({ action: 'importRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const listPresetsBtn = ui.el('button','sws-btn', 'List presets');
+      listPresetsBtn.title = 'Loads available preset names into selector.';
+      listPresetsBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.listPresets !== 'function') throw new Error('adapter.listPresets unavailable');
+          const presets = ad.listPresets();
+          fillPresetOptions();
+          showState({ action: 'listPresets', ok: true, presets });
+        }catch(err){
+          showState({ action: 'listPresets', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const previewPresetBtn = ui.el('button','sws-btn', 'Preview preset');
+      previewPresetBtn.title = 'Shows preset routes without mutating current route map.';
+      previewPresetBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.getPreset !== 'function') throw new Error('adapter.getPreset unavailable');
+          const preset = String(presetSelect.value || '').trim();
+          if(!preset) throw new Error('preset is empty');
+          const routes = ad.getPreset(preset);
+          showState({ action: 'previewPreset', ok: true, preset, routes });
+        }catch(err){
+          showState({ action: 'previewPreset', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const applyPresetBtn = ui.el('button','sws-btn', 'Apply preset');
+      applyPresetBtn.title = 'Applies selected preset to route map; verify with Health + routes and Probe open.';
+      applyPresetBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.applyPreset !== 'function') throw new Error('adapter.applyPreset unavailable');
+          const preset = String(presetSelect.value || '').trim();
+          if(!preset) throw new Error('preset is empty');
+          const result = ad.applyPreset(preset);
+          fillPresetOptions();
+          showState({ action: 'applyPreset', ok: true, preset, result });
+        }catch(err){
+          showState({ action: 'applyPreset', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const probeOpenBtn = ui.el('button','sws-btn', 'Probe open (current id)');
+      probeOpenBtn.title = 'Runtime smoke check: opens probe screen using current route for current screen id.';
+      probeOpenBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.open !== 'function') throw new Error('adapter.open unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+
+          const res = ad.open({
+            screenId: id,
+            sws: {
+              title: `Adapter probe: ${id}`,
+              subtitle: 'Temporary probe screen',
+              canSave: ()=>false,
+              saveLabel: null,
+              content: (ctx)=>{
+                const box = ctx.ui.el('div','sws-card');
+                box.appendChild(ctx.ui.el('div','sws-card-title', 'Adapter probe'));
+                box.appendChild(ctx.ui.el('div','', `Opened via adapter for screenId: ${id}`));
+                return box;
+              }
+            }
+          });
+          showState({ action: 'probeOpen', id, result: res, ok: !!res?.ok });
+        }catch(err){
+          showState({ action: 'probeOpen', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const scenarioManualBtn = ui.el('button','sws-btn', 'Run scenario: manual route check');
+      scenarioManualBtn.title = 'Sequence: Health + routes -> Get route -> Set route -> Probe open for current id.';
+      scenarioManualBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad) throw new Error('adapter unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const before = ad.getRoute(id);
+          ad.setRoute(id, routeSelect.value);
+          const after = ad.getRoute(id);
+          const probe = ad.open({
+            screenId: id,
+            sws: {
+              title: `Adapter probe: ${id}`,
+              subtitle: 'Scenario manual route check',
+              canSave: ()=>false,
+              saveLabel: null,
+              content: (ctx)=> ctx.ui.el('div','', `Scenario probe for ${id}`)
+            }
+          });
+          showState({
+            action: 'scenario.manual_route_check',
+            ok: true,
+            id,
+            routeBefore: before,
+            routeAfter: after,
+            probe
+          });
+        }catch(err){
+          showState({ action: 'scenario.manual_route_check', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const scenarioPresetBtn = ui.el('button','sws-btn', 'Run scenario: preset dry-run + apply');
+      scenarioPresetBtn.title = 'Sequence: List presets -> Preview preset -> Apply preset -> Health + routes.';
+      scenarioPresetBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad) throw new Error('adapter unavailable');
+          const preset = String(presetSelect.value || '').trim();
+          if(!preset) throw new Error('preset is empty');
+          const allPresets = ad.listPresets();
+          const preview = ad.getPreset(preset);
+          const applied = ad.applyPreset(preset);
+          showState({
+            action: 'scenario.preset_dryrun_apply',
+            ok: true,
+            preset,
+            allPresets,
+            preview,
+            applied
+          });
+        }catch(err){
+          showState({ action: 'scenario.preset_dryrun_apply', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      routeOpsRow.appendChild(healthBtn);
+      routeOpsRow.appendChild(getRouteBtn);
+      routeOpsRow.appendChild(setRouteBtn);
+      routeOpsRow.appendChild(clearRouteBtn);
+      routeOpsRow.appendChild(clearAllBtn);
+
+      presetOpsRow.appendChild(listPresetsBtn);
+      presetOpsRow.appendChild(previewPresetBtn);
+      presetOpsRow.appendChild(applyPresetBtn);
+
+      ioOpsRow.appendChild(exportRoutesBtn);
+      ioOpsRow.appendChild(importRoutesBtn);
+
+      probeOpsRow.appendChild(probeOpenBtn);
+
+      scenarioOpsRow.appendChild(scenarioManualBtn);
+      scenarioOpsRow.appendChild(scenarioPresetBtn);
+
+      adapterCard.appendChild(adapterInfo);
+      adapterCard.appendChild(adapterGuide);
+      adapterCard.appendChild(idInput);
+      adapterCard.appendChild(routeSelect);
+      adapterCard.appendChild(presetSelect);
+      adapterCard.appendChild(routesJson);
+      adapterCard.appendChild(mkHint('Route controls (single screen):'));
+      adapterCard.appendChild(routeOpsRow);
+      adapterCard.appendChild(mkHint('Preset controls (bulk routes):'));
+      adapterCard.appendChild(presetOpsRow);
+      adapterCard.appendChild(mkHint('Backup / restore route map:'));
+      adapterCard.appendChild(ioOpsRow);
+      adapterCard.appendChild(mkHint('Runtime verification:'));
+      adapterCard.appendChild(probeOpsRow);
+      adapterCard.appendChild(mkHint('Guided scenarios (recommended combinations):'));
+      adapterCard.appendChild(scenarioOpsRow);
+      adapterCard.appendChild(adapterOut);
+      fillPresetOptions();
+      showState();
+
+
+      // Table feature debug probes (table-first architecture)
+      const tableFeatCard = section('Table feature debug probes');
+      const tableFeatInfo = ui.el('div','', 'Runs debug-only simulations for edit.commit / edit.cancel / rerender.sync and only prints probe output (no persistent table changes).');
+      tableFeatInfo.style.marginBottom = '6px';
+      const tableFeatOut = ui.el('pre','');
+      tableFeatOut.style.whiteSpace = 'pre-wrap';
+      tableFeatOut.style.maxHeight = '220px';
+      tableFeatOut.style.overflow = 'auto';
+
+      const featDebug = {
+        editCommit: createEditCommitDebugTools(),
+        editCancel: createEditCancelDebugTools(),
+        rerenderSync: createRerenderSyncDebugTools()
+      };
+
+      const tableFeatRow = ui.el('div','');
+      tableFeatRow.style.display = 'flex';
+      tableFeatRow.style.gap = '8px';
+      tableFeatRow.style.flexWrap = 'wrap';
+
+      const safeStringify = (value)=>{
+        const toSerializable = (current, ancestors = [])=>{
+          if (!current || typeof current !== 'object') return current;
+          if (ancestors.includes(current)) return '[Circular]';
+
+          const nextAncestors = [...ancestors, current];
+
+          if (Array.isArray(current)) {
+            return current.map((item)=> toSerializable(item, nextAncestors));
+          }
+
+          const out = {};
+          for (const [k, v] of Object.entries(current)) {
+            out[k] = toSerializable(v, nextAncestors);
+          }
+          return out;
+        };
+
+        return JSON.stringify(toSerializable(value), null, 2);
+      };
+
+      const runAllFeat = ()=>{
+        const results = [];
+        const probes = [
+          ['table.edit.commit', ()=> featDebug.editCommit.simulate({ rowId:'row-probe-1', colId:'col-probe-1', newValue:'probe' })],
+          ['table.edit.cancel', ()=> featDebug.editCancel.simulate({ rowId:'row-probe-1', colId:'col-probe-1' })],
+          ['table.rerender.sync', ()=> featDebug.rerenderSync.simulate({ changedIds:['row-probe-1'], anchorId:'row-probe-1' })]
+        ];
+
+        for (const [id, runner] of probes) {
+          try{
+            results.push({ feature:id, ok:true, result:runner() });
+          }catch(err){
+            results.push({ feature:id, ok:false, error: err?.message || String(err) });
+          }
+        }
+
+        tableFeatOut.textContent = safeStringify({ action:'run_all_table_features', mode:'debug_simulation_only', mutatesPersistentState:false, results });
+      };
+
+      const runAllBtn = ui.el('button','sws-btn', 'Run all table probes (debug)');
+      runAllBtn.onclick = ()=> runAllFeat();
+
+      tableFeatRow.appendChild(runAllBtn);
+      tableFeatCard.appendChild(tableFeatInfo);
+      tableFeatCard.appendChild(tableFeatRow);
+
+      tableFeatCard.appendChild(tableFeatOut);
+
+      const tableApiCard = section('Table feature API registry');
+      const tableApiInfo = ui.el('div','', 'Inspect registered table feature contracts used by adapter/debug flows.');
+      tableApiInfo.style.marginBottom = '6px';
+      const tableApiOut = ui.el('pre','');
+      tableApiOut.style.whiteSpace = 'pre-wrap';
+      tableApiOut.style.maxHeight = '220px';
+      tableApiOut.style.overflow = 'auto';
+
+      const tableApiBtn = ui.el('button','sws-btn', 'Show table feature contracts');
+      tableApiBtn.onclick = ()=>{
+        const apis = listTableFeatureApis();
+        const result = {
+          action: 'table_feature_registry.inspect',
+          count: apis.length,
+          contracts: apis,
+          allValid: apis.every((api)=> validateTableFeatureApi(api))
+        };
+        tableApiOut.textContent = safeStringify(result);
+      };
+
+      tableApiCard.appendChild(tableApiInfo);
+      tableApiCard.appendChild(tableApiBtn);
+      tableApiCard.appendChild(tableApiOut);
+
       // Runtime loaded dist assets
       const assetsCard = section('Runtime loaded dist assets');
       const listWrap = ui.el('div','');
@@ -563,12 +1017,33 @@ const runInspectZip = async ()=>{
       root.appendChild(wipeCard);
       root.appendChild(applyCard);
       root.appendChild(zipCard);
+      root.appendChild(adapterCard);
+      root.appendChild(tableFeatCard);
       root.appendChild(assetsCard);
       return root;
     },
     onSave: ()=>{},
     onClose: ()=>{}
   });
+
+  const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+  if (adapter && typeof adapter.open === 'function') {
+    const res = adapter.open({
+      screenId: 'debug.center',
+      swsOpen: (sw) => {
+        if (typeof sw.openCustomRoot !== 'function' || typeof sw.push !== 'function') {
+          throw new Error('SettingsWindow custom root API is unavailable');
+        }
+        sw.openCustomRoot(() => sw.push(buildScreen()));
+      }
+    });
+    if (res?.ok) return;
+  }
+
+  if(!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function'){
+    try{ window.UI?.toast?.show?.('Debug Center недоступний (SettingsWindow не ініціалізовано)', { type:'warning' }); }catch(_){ /* ignore */ }
+    return;
+  }
 
   SW.openCustomRoot(()=> SW.push(buildScreen()));
 }
