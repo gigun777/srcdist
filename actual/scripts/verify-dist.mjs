@@ -1,23 +1,9 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { REQUIRED_OUTPUTS } from './dist_contract.mjs';
 
-const projectRoot = path.resolve(new URL('..', import.meta.url).pathname);
-const distDir = path.join(projectRoot, 'dist');
-const metaPath = path.join(distDir, 'build_meta.json');
-
-const requiredOutputs = [
-  'dist/index.js',
-  'dist/styles.css',
-  'dist/ui/ui_core.js',
-  'dist/ui/ui_bootstrap_esm.js',
-  'dist/ui/settings/settings_shell_modal.js',
-  'dist/ui/sws_v2/sws_modal.js',
-  'dist/ui/sws_v2/sws_modal.css',
-  'dist/ui/sws_v2/sws_adapter.js',
-  'dist/table/features/edit_commit/debug.js',
-  'dist/table/features/edit_cancel/debug.js',
-  'dist/table/features/rerender_sync/debug.js'
-];
+export const requiredOutputs = REQUIRED_OUTPUTS;
 
 async function exists(target) {
   try {
@@ -28,51 +14,89 @@ async function exists(target) {
   }
 }
 
-async function main() {
+export async function verifyDist(rootDir = path.resolve(new URL('..', import.meta.url).pathname)) {
   const errors = [];
+  const projectRoot = rootDir;
+  const distDir = path.join(projectRoot, 'dist');
+  const metaPath = path.join(distDir, 'build_meta.json');
 
   if (!(await exists(distDir))) {
     errors.push('Missing dist directory');
   }
 
-  for (const rel of requiredOutputs) {
+  for (const rel of REQUIRED_OUTPUTS) {
     const abs = path.join(projectRoot, rel);
     if (!(await exists(abs))) errors.push(`Missing required output: ${rel}`);
   }
 
   if (!(await exists(metaPath))) {
     errors.push('Missing build metadata: dist/build_meta.json (run npm run build)');
-  } else {
-    const metaRaw = await fs.readFile(metaPath, 'utf8');
-    let meta = null;
-    try {
-      meta = JSON.parse(metaRaw);
-    } catch {
-      errors.push('build_meta.json is not valid JSON');
-    }
+    return errors;
+  }
 
-    if (meta) {
-      if (!Array.isArray(meta.outputs)) {
-        errors.push('build_meta.json: outputs must be an array');
-      } else {
-        for (const rel of meta.outputs) {
-          const abs = path.join(projectRoot, rel);
-          if (!(await exists(abs))) errors.push(`build_meta.json references missing file: ${rel}`);
-        }
-      }
+  const metaRaw = await fs.readFile(metaPath, 'utf8');
+  let meta = null;
+  try {
+    meta = JSON.parse(metaRaw);
+  } catch {
+    errors.push('build_meta.json is not valid JSON');
+    return errors;
+  }
+
+  if (meta.schemaVersion !== 1) {
+    errors.push(`build_meta.json: unsupported schemaVersion ${String(meta.schemaVersion)}`);
+  }
+  if (typeof meta.stage !== 'string' || !meta.stage.trim()) {
+    errors.push('build_meta.json: stage must be a non-empty string');
+  }
+  if (typeof meta.gitHash !== 'string' || !meta.gitHash.trim()) {
+    errors.push('build_meta.json: gitHash must be a non-empty string');
+  }
+
+  if (!Array.isArray(meta.outputs)) {
+    errors.push('build_meta.json: outputs must be an array');
+    return errors;
+  }
+
+  if (meta.outputsCount !== meta.outputs.length) {
+    errors.push(`build_meta.json: outputsCount mismatch (declared=${String(meta.outputsCount)} actual=${meta.outputs.length})`);
+  }
+
+  const dup = meta.outputs.find((rel, idx) => meta.outputs.indexOf(rel) !== idx);
+  if (dup) {
+    errors.push(`build_meta.json: duplicate output entry: ${dup}`);
+  }
+
+  for (const rel of meta.outputs) {
+    const abs = path.join(projectRoot, rel);
+    if (!(await exists(abs))) errors.push(`build_meta.json references missing file: ${rel}`);
+  }
+
+  const outputSet = new Set(meta.outputs);
+  for (const rel of REQUIRED_OUTPUTS) {
+    if (!outputSet.has(rel)) {
+      errors.push(`build_meta.json missing required output entry: ${rel}`);
     }
   }
 
+  return errors;
+}
+
+async function main() {
+  const errors = await verifyDist();
   if (errors.length) {
     for (const error of errors) console.error(`[verify-dist] ${error}`);
     process.exitCode = 1;
     return;
   }
-
   console.log('[verify-dist] OK');
 }
 
-main().catch((error) => {
-  console.error('[verify-dist] failed:', error.message);
-  process.exitCode = 1;
-});
+const isEntrypoint = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isEntrypoint) {
+  main().catch((error) => {
+    console.error('[verify-dist] failed:', error.message);
+    process.exitCode = 1;
+  });
+}

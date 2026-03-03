@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { REQUIRED_OUTPUTS } from './dist_contract.mjs';
 
 const projectRoot = path.resolve(new URL('..', import.meta.url).pathname);
 const distDir = path.join(projectRoot, 'dist');
@@ -141,6 +142,12 @@ async function main() {
     .map((file) => path.relative(projectRoot, file).replaceAll(path.sep, '/'))
     .filter((file) => file !== 'dist/build_meta.json')
     .sort();
+
+  const outputSet = new Set(outputs);
+  const missingRequired = REQUIRED_OUTPUTS.filter((rel) => !outputSet.has(rel));
+  if (missingRequired.length) {
+    throw new Error(`Missing required dist outputs in build metadata: ${missingRequired.join(', ')}`);
+  }
 
   const meta = {
     schemaVersion: 1,
