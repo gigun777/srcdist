@@ -24,7 +24,12 @@ export function createDebugTrace(meta, inputs) {
 }
 
 export function finishDebugTrace(trace, outputs, startedAt) {
-  trace.outputs = outputs;
+  trace.outputs = {
+    result: outputs?.result || null,
+    patches: Array.isArray(outputs?.patches) ? outputs.patches : [],
+    effects: Array.isArray(outputs?.effects) ? outputs.effects : [],
+    nextStateHints: outputs?.nextStateHints || {}
+  };
   trace.timingMs = Date.now() - startedAt;
   return trace;
 }

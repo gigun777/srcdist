@@ -37,3 +37,10 @@ test('rerender_sync debug tools simulate and store lastRun', () => {
   assert.equal(run.result.ok, true);
   assert.deepEqual(dbg.getLastRun(), run);
 });
+
+
+test('rerender_sync debug output is JSON serializable', () => {
+  const dbg = createRerenderSyncDebugTools();
+  const run = dbg.simulate({ changedIds: ['rj'], anchorId: 'rj' });
+  assert.doesNotThrow(() => JSON.stringify(run));
+});

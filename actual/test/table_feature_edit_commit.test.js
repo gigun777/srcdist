@@ -38,3 +38,10 @@ test('edit_commit debug tools simulate and store lastRun', () => {
   assert.equal(run.result.ok, true);
   assert.deepEqual(dbg.getLastRun(), run);
 });
+
+
+test('edit_commit debug output is JSON serializable', () => {
+  const dbg = createEditCommitDebugTools();
+  const run = dbg.simulate({ rowId: 'rj', colId: 'cj', newValue: 'v' });
+  assert.doesNotThrow(() => JSON.stringify(run));
+});
