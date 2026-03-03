@@ -5,7 +5,9 @@ const KEYS = {
   order: (journalId) => `tableStore:order:${journalId}`,
   record: (journalId, recordId) => `tableStore:record:${journalId}:${recordId}`,
   recordPrefix: (journalId) => `tableStore:record:${journalId}:`,
-  chlog: (journalId) => `tableStore:chlog:${journalId}`
+  chlog: (journalId) => `tableStore:chlog:${journalId}`,
+  // Logical dataset key used by delta payload contracts.
+  dataset: (journalId) => String(journalId)
 };
 
 function nowIso() {
