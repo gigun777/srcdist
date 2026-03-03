@@ -1,0 +1,20 @@
+Step58 — Table function standard: first feature module (edit.commit)
+
+Що зроблено:
+1) Створено базовий контракт table-feature:
+   - `src/table/core/table_feature_contract.js`
+
+2) Створено першу ізольовану table-функцію:
+   - `src/table/features/edit_commit/feature.js`
+   - `src/table/features/edit_commit/pipes.js`
+   - `src/table/features/edit_commit/api.js`
+   - `src/table/features/edit_commit/debug.js`
+   - `src/table/features/edit_commit/README.md`
+
+3) Додано тести:
+   - `test/table_feature_edit_commit.test.js`
+   - перевірка pipes validation, run output, api contract, debug simulate
+
+Навіщо:
+- Зафіксувати стандарт "кожна функція таблиці = окремий файл/модуль + pipes + api + debug".
+- Почати з інваріанту Edit commit як базового контрольного кейсу.

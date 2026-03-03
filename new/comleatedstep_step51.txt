@@ -1,0 +1,20 @@
+Step51 — Alternative A: підтримка root-flow через adapter (Debug Center)
+
+Що зроблено:
+1) Розширено adapter API (`src/ui/sws_v2/sws_adapter.js`):
+   - `open()` тепер підтримує `swsOpen(sw)` для кастомних root-flow сценаріїв.
+   - Повертає mode=`custom-root` для цього шляху.
+
+2) Інтегровано Debug Center з adapter-first логікою (`src/ui/ui_debug_center.js`):
+   - Спочатку виклик через `UI.swsAdapter.open({ screenId:'debug.center', swsOpen })`.
+   - Якщо adapter недоступний/неуспішний — fallback на прямий SettingsWindow path.
+
+3) Підсилено build sync (`scripts/build.mjs`):
+   - Крім adapter, build копіює `src/ui/ui_debug_center.js` у `dist/ui/ui_debug_center.js`.
+   - Це тримає runtime dist синхронним із source для Alternative A кроків.
+
+4) Додано unit test:
+   - `test/sws_adapter.test.js` перевіряє `swsOpen` сценарій для root-screen.
+
+Результат:
+- Alternative A покриває не тільки push-екрани, а й root-flow (Debug Center) без Big-Bang.
