@@ -121,3 +121,28 @@ test('sws adapter importRoutes rejects non-object payloads', () => {
   assert.throws(() => adapter.importRoutes([]), /importRoutes requires plain object/);
   assert.throws(() => adapter.importRoutes(null), /importRoutes requires plain object/);
 });
+
+
+test('sws adapter lists available route presets', () => {
+  const adapter = createSwsAdapter({
+    getSettingsWindow: () => ({ push: () => {} }),
+    openLegacyModal: () => {}
+  });
+
+  const presets = adapter.listPresets().sort();
+  assert.deepEqual(presets, ['modern_sws_core', 'safe_legacy_core']);
+});
+
+test('sws adapter can apply route preset and reject unknown preset', () => {
+  const adapter = createSwsAdapter({
+    getSettingsWindow: () => ({ push: () => {} }),
+    openLegacyModal: () => {}
+  });
+
+  const applied = adapter.applyPreset('safe_legacy_core');
+  assert.equal(applied.ok, true);
+  assert.equal(adapter.getRoute('transfer.execute'), 'legacy');
+  assert.equal(adapter.getRoute('backup.import'), 'legacy');
+
+  assert.throws(() => adapter.applyPreset('not_exists'), /Unknown preset/);
+});

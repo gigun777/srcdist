@@ -1,5 +1,17 @@
 const VALID_ROUTES = new Set(['sws', 'legacy']);
 
+const DEFAULT_PRESETS = Object.freeze({
+  safe_legacy_core: Object.freeze({
+    'transfer.execute': 'legacy',
+    'backup.import': 'legacy'
+  }),
+  modern_sws_core: Object.freeze({
+    'transfer.execute': 'sws',
+    'backup.import': 'sws',
+    'debug.center': 'sws'
+  })
+});
+
 export function createSwsAdapter(options = {}) {
   const routeByScreen = new Map();
 
@@ -38,6 +50,24 @@ export function createSwsAdapter(options = {}) {
       routeByScreen.set(String(screenId), route);
     }
     return routeByScreen.size;
+  }
+
+
+  function listPresets() {
+    return Object.keys(DEFAULT_PRESETS);
+  }
+
+  function applyPreset(name, options = {}) {
+    const presetName = String(name || '').trim();
+    const presetRoutes = DEFAULT_PRESETS[presetName];
+    if (!presetRoutes) throw new Error(`Unknown preset: ${presetName}`);
+    importRoutes(presetRoutes, options);
+    return {
+      ok: true,
+      preset: presetName,
+      routesCount: routeByScreen.size,
+      routes: exportRoutes()
+    };
   }
 
   function open(payload = {}) {
@@ -86,6 +116,8 @@ export function createSwsAdapter(options = {}) {
     clearAllRoutes,
     exportRoutes,
     importRoutes,
+    listPresets,
+    applyPreset,
     open,
     getHealth,
     getRoutesSnapshot: () => Object.fromEntries(routeByScreen.entries())
