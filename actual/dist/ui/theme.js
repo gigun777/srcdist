@@ -6,8 +6,12 @@
  * - Key: 'ui.theme'
  */
 const STORAGE_KEY = 'ui.theme';
-const ROOT = document.documentElement;
 const FALLBACK_THEME = 'light';
+const memoryRoot = { dataset: {} };
+
+function getRoot() {
+  return globalThis.document?.documentElement ?? memoryRoot;
+}
 
 async function getStorage() {
   const UI = globalThis.UI;
@@ -24,7 +28,7 @@ export async function initTheme(opts = {}) {
   }
 
   if (!theme && preferSystemTheme) {
-    const mq = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+    const mq = globalThis.window?.matchMedia && globalThis.window.matchMedia('(prefers-color-scheme: dark)');
     if (mq && mq.matches) theme = 'dark';
   }
 
@@ -35,7 +39,8 @@ export async function initTheme(opts = {}) {
 
 export async function applyTheme(themeName) {
     const theme = (themeName === 'dark' || themeName === 'light') ? themeName : FALLBACK_THEME;
-  ROOT.dataset.theme = theme;
+  const root = getRoot();
+  root.dataset.theme = theme;
     const storage = await getStorage();
   if (storage) await storage.set(STORAGE_KEY, theme);
   return theme;
@@ -47,7 +52,8 @@ export async function toggleTheme() {
 }
 
 export function getTheme() {
-  const t = ROOT.dataset.theme;
+  const root = getRoot();
+  const t = root.dataset.theme;
   return (t === 'dark' || t === 'light') ? t : FALLBACK_THEME;
 }
 
