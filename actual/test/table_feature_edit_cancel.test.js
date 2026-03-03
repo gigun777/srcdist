@@ -43,5 +43,7 @@ test('edit_cancel debug tools simulate and store lastRun', () => {
 test('edit_cancel debug output is JSON serializable', () => {
   const dbg = createEditCancelDebugTools();
   const run = dbg.simulate({ rowId: 'rj', colId: 'cj' });
-  assert.doesNotThrow(() => JSON.stringify(run));
+  const json = JSON.stringify(run);
+  assert.ok(typeof json === 'string');
+  assert.doesNotMatch(json, /\[Circular\]/);
 });

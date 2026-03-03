@@ -43,5 +43,7 @@ test('edit_commit debug tools simulate and store lastRun', () => {
 test('edit_commit debug output is JSON serializable', () => {
   const dbg = createEditCommitDebugTools();
   const run = dbg.simulate({ rowId: 'rj', colId: 'cj', newValue: 'v' });
-  assert.doesNotThrow(() => JSON.stringify(run));
+  const json = JSON.stringify(run);
+  assert.ok(typeof json === 'string');
+  assert.doesNotMatch(json, /\[Circular\]/);
 });

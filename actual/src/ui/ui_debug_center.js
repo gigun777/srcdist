@@ -690,7 +690,7 @@ const runInspectZip = async ()=>{
 
       // Table feature debug probes (table-first architecture)
       const tableFeatCard = section('Table feature debug probes');
-      const tableFeatInfo = ui.el('div','', 'Run all isolated table feature simulations in one click (edit.commit / edit.cancel / rerender.sync).');
+      const tableFeatInfo = ui.el('div','', 'Runs debug-only simulations for edit.commit / edit.cancel / rerender.sync and only prints probe output (no persistent table changes).');
       tableFeatInfo.style.marginBottom = '6px';
       const tableFeatOut = ui.el('pre','');
       tableFeatOut.style.whiteSpace = 'pre-wrap';
@@ -709,14 +709,24 @@ const runInspectZip = async ()=>{
       tableFeatRow.style.flexWrap = 'wrap';
 
       const safeStringify = (value)=>{
-        const seen = new WeakSet();
-        return JSON.stringify(value, (key, current)=>{
-          if (current && typeof current === 'object') {
-            if (seen.has(current)) return '[Circular]';
-            seen.add(current);
+        const toSerializable = (current, ancestors = [])=>{
+          if (!current || typeof current !== 'object') return current;
+          if (ancestors.includes(current)) return '[Circular]';
+
+          const nextAncestors = [...ancestors, current];
+
+          if (Array.isArray(current)) {
+            return current.map((item)=> toSerializable(item, nextAncestors));
           }
-          return current;
-        }, 2);
+
+          const out = {};
+          for (const [k, v] of Object.entries(current)) {
+            out[k] = toSerializable(v, nextAncestors);
+          }
+          return out;
+        };
+
+        return JSON.stringify(toSerializable(value), null, 2);
       };
 
       const runAllFeat = ()=>{
@@ -735,10 +745,10 @@ const runInspectZip = async ()=>{
           }
         }
 
-        tableFeatOut.textContent = safeStringify({ action:'run_all_table_features', results });
+        tableFeatOut.textContent = safeStringify({ action:'run_all_table_features', mode:'debug_simulation_only', mutatesPersistentState:false, results });
       };
 
-      const runAllBtn = ui.el('button','sws-btn', 'Run all table probes');
+      const runAllBtn = ui.el('button','sws-btn', 'Run all table probes (debug)');
       runAllBtn.onclick = ()=> runAllFeat();
 
       tableFeatRow.appendChild(runAllBtn);

@@ -23,12 +23,17 @@ export function createDebugTrace(meta, inputs) {
   };
 }
 
+function cloneJson(value) {
+  if (value === null || value === undefined) return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
 export function finishDebugTrace(trace, outputs, startedAt) {
   trace.outputs = {
-    result: outputs?.result || null,
-    patches: Array.isArray(outputs?.patches) ? outputs.patches : [],
-    effects: Array.isArray(outputs?.effects) ? outputs.effects : [],
-    nextStateHints: outputs?.nextStateHints || {}
+    result: cloneJson(outputs?.result || null),
+    patches: cloneJson(Array.isArray(outputs?.patches) ? outputs.patches : []),
+    effects: cloneJson(Array.isArray(outputs?.effects) ? outputs.effects : []),
+    nextStateHints: cloneJson(outputs?.nextStateHints || {})
   };
   trace.timingMs = Date.now() - startedAt;
   return trace;
