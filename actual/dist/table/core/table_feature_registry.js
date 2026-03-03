@@ -1,11 +1,13 @@
 import { editCommitApi } from '../features/edit_commit/api.js';
 import { editCancelApi } from '../features/edit_cancel/api.js';
 import { rerenderSyncApi } from '../features/rerender_sync/api.js';
+import { sortToggleApi } from '../features/sort_toggle/api.js';
 
 const TABLE_FEATURE_APIS = Object.freeze([
   editCommitApi,
   editCancelApi,
-  rerenderSyncApi
+  rerenderSyncApi,
+  sortToggleApi
 ]);
 
 export function listTableFeatureApis() {

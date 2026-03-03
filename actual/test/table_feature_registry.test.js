@@ -5,7 +5,7 @@ import { listTableFeatureApis, getTableFeatureApi, validateTableFeatureApi } fro
 test('table feature registry exposes all table feature APIs', () => {
   const apis = listTableFeatureApis();
   const ids = apis.map((api) => api.featureId).sort();
-  assert.deepEqual(ids, ['table.edit.cancel', 'table.edit.commit', 'table.rerender.sync']);
+  assert.deepEqual(ids, ['table.edit.cancel', 'table.edit.commit', 'table.rerender.sync', 'table.sort.toggle']);
 });
 
 test('table feature registry can resolve API by feature id', () => {
