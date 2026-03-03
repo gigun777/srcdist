@@ -1,0 +1,19 @@
+Step54 — Alternative A: import/export route map
+
+Що зроблено:
+1) Розширено API адаптера (`src/ui/sws_v2/sws_adapter.js`):
+   - `exportRoutes()` — повертає route map як plain object.
+   - `importRoutes(routes, { replace })` — імпорт route map з валідацією route значень.
+
+2) Розширено Debug Center (`src/ui/ui_debug_center.js`):
+   - Додано textarea для JSON route map.
+   - Додано кнопки:
+     - `Export routes JSON`
+     - `Import routes JSON`
+   - Результат імпорту/експорту відображається у debug JSON output.
+
+3) Додано unit test (`test/sws_adapter.test.js`):
+   - перевірка exportRoutes + importRoutes сценарію.
+
+Навіщо:
+- Оператор може зберегти/відновити набір runtime route-перемикань під конкретний тестовий сценарій.
