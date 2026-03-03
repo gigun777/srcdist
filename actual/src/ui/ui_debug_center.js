@@ -11,6 +11,7 @@ import { resolveImportConfirmsV2, mergeSimulatedIssues } from '../backup_v2/back
 import { createEditCommitDebugTools } from '../table/features/edit_commit/debug.js';
 import { createEditCancelDebugTools } from '../table/features/edit_cancel/debug.js';
 import { createRerenderSyncDebugTools } from '../table/features/rerender_sync/debug.js';
+import { listTableFeatureApis, validateTableFeatureApi } from '../table/core/table_feature_registry.js';
 
 export function openDebugCenter(){
   const SW = window.SettingsWindow;
@@ -754,7 +755,32 @@ const runInspectZip = async ()=>{
       tableFeatRow.appendChild(runAllBtn);
       tableFeatCard.appendChild(tableFeatInfo);
       tableFeatCard.appendChild(tableFeatRow);
+
       tableFeatCard.appendChild(tableFeatOut);
+
+      const tableApiCard = section('Table feature API registry');
+      const tableApiInfo = ui.el('div','', 'Inspect registered table feature contracts used by adapter/debug flows.');
+      tableApiInfo.style.marginBottom = '6px';
+      const tableApiOut = ui.el('pre','');
+      tableApiOut.style.whiteSpace = 'pre-wrap';
+      tableApiOut.style.maxHeight = '220px';
+      tableApiOut.style.overflow = 'auto';
+
+      const tableApiBtn = ui.el('button','sws-btn', 'Show table feature contracts');
+      tableApiBtn.onclick = ()=>{
+        const apis = listTableFeatureApis();
+        const result = {
+          action: 'table_feature_registry.inspect',
+          count: apis.length,
+          contracts: apis,
+          allValid: apis.every((api)=> validateTableFeatureApi(api))
+        };
+        tableApiOut.textContent = safeStringify(result);
+      };
+
+      tableApiCard.appendChild(tableApiInfo);
+      tableApiCard.appendChild(tableApiBtn);
+      tableApiCard.appendChild(tableApiOut);
 
       // Runtime loaded dist assets
       const assetsCard = section('Runtime loaded dist assets');
