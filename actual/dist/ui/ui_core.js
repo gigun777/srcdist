@@ -389,8 +389,14 @@ function openQuickNavRoot({ sdo }) {
       }
     };
 
+    idxInput.addEventListener('keydown', onKey);
+    tplSearch.addEventListener('keydown', onKey);
+
     card.append(rowIdx, rowSearch, list, warn, addBtn);
     body.append(card);
+
+    renderList();
+    setTimeout(() => idxInput.focus(), 0);
 
     SW.push({
       title: 'Додати журнал',
@@ -398,15 +404,6 @@ function openQuickNavRoot({ sdo }) {
       saveLabel: 'Додати',
       content: () => body,
       onSave: doAdd,
-      onMount: () => {
-        rebuildSelect();
-        document.addEventListener('keydown', onKey, true);
-        setTimeout(() => idxInput.focus(), 0);
-        renderList();
-      },
-      onUnmount: () => {
-        document.removeEventListener('keydown', onKey, true);
-      },
     });
   };
 
@@ -1057,6 +1054,7 @@ async function exportCurrentJournalJson() {
       downloadBlob(new Blob([json], { type: 'application/json' }), fname);
       window.UI?.toast?.show?.('Експорт JSON виконано', { type: 'success' });
     }
+    steps.push({ stage: 'getActiveJournalId', ok: true, msg: id });
 
     
 async function importCurrentJournalJson() {
