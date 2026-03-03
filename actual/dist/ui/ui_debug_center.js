@@ -543,6 +543,23 @@ const runInspectZip = async ()=>{
         routeSelect.appendChild(opt);
       });
 
+      const presetSelect = document.createElement('select');
+      presetSelect.style.width = '100%';
+      presetSelect.style.marginBottom = '8px';
+
+      const fillPresetOptions = ()=>{
+        presetSelect.innerHTML = '';
+        const ad = getAdapter();
+        const presets = ad?.listPresets?.() || [];
+        const all = ['(select preset)', ...presets];
+        all.forEach((name, idx)=>{
+          const opt = document.createElement('option');
+          opt.value = idx === 0 ? '' : name;
+          opt.textContent = name;
+          presetSelect.appendChild(opt);
+        });
+      };
+
       const adapterBtnRow = ui.el('div','');
       adapterBtnRow.style.display = 'flex';
       adapterBtnRow.style.gap = '8px';
@@ -642,6 +659,34 @@ const runInspectZip = async ()=>{
         }
       };
 
+      const listPresetsBtn = ui.el('button','sws-btn', 'List presets');
+      listPresetsBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.listPresets !== 'function') throw new Error('adapter.listPresets unavailable');
+          const presets = ad.listPresets();
+          fillPresetOptions();
+          showState({ action: 'listPresets', ok: true, presets });
+        }catch(err){
+          showState({ action: 'listPresets', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const applyPresetBtn = ui.el('button','sws-btn', 'Apply preset');
+      applyPresetBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.applyPreset !== 'function') throw new Error('adapter.applyPreset unavailable');
+          const preset = String(presetSelect.value || '').trim();
+          if(!preset) throw new Error('preset is empty');
+          const result = ad.applyPreset(preset);
+          fillPresetOptions();
+          showState({ action: 'applyPreset', ok: true, preset, result });
+        }catch(err){
+          showState({ action: 'applyPreset', ok: false, error: err?.message || String(err) });
+        }
+      };
+
       const probeOpenBtn = ui.el('button','sws-btn', 'Probe open (current id)');
       probeOpenBtn.onclick = ()=>{
         try{
@@ -677,15 +722,19 @@ const runInspectZip = async ()=>{
       adapterBtnRow.appendChild(clearAllBtn);
       adapterBtnRow.appendChild(exportRoutesBtn);
       adapterBtnRow.appendChild(importRoutesBtn);
+      adapterBtnRow.appendChild(listPresetsBtn);
+      adapterBtnRow.appendChild(applyPresetBtn);
       adapterBtnRow.appendChild(probeOpenBtn);
       adapterBtnRow.appendChild(healthBtn);
 
       adapterCard.appendChild(adapterInfo);
       adapterCard.appendChild(idInput);
       adapterCard.appendChild(routeSelect);
+      adapterCard.appendChild(presetSelect);
       adapterCard.appendChild(routesJson);
       adapterCard.appendChild(adapterBtnRow);
       adapterCard.appendChild(adapterOut);
+      fillPresetOptions();
       showState();
 
 
