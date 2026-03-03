@@ -884,10 +884,30 @@ const runInspectZip = async ()=>{
         rerenderSync: createRerenderSyncDebugTools()
       };
 
-      const tableFeatRow = ui.el('div','');
-      tableFeatRow.style.display = 'flex';
-      tableFeatRow.style.gap = '8px';
-      tableFeatRow.style.flexWrap = 'wrap';
+      const tableGuide = ui.el('div','');
+      tableGuide.style.whiteSpace = 'pre-wrap';
+      tableGuide.style.fontSize = '12px';
+      tableGuide.style.opacity = '0.9';
+      tableGuide.style.marginBottom = '8px';
+      tableGuide.textContent = [
+        'Recommended table probe flows:',
+        '1) Single checks: Run edit.commit / Run edit.cancel / Run rerender.sync (verify one feature in isolation).',
+        '2) Integration-like check: Run scenario: edit.commit -> rerender.sync (simulate common commit + render chain).',
+        '3) Full smoke: Run all table probes (debug).'
+      ].join('\n');
+
+      const mkTableRow = ()=>{
+        const row = ui.el('div','');
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+        row.style.flexWrap = 'wrap';
+        row.style.marginBottom = '6px';
+        return row;
+      };
+
+      const tableSingleRow = mkTableRow();
+      const tableScenarioRow = mkTableRow();
+      const tableBulkRow = mkTableRow();
 
       const safeStringify = (value)=>{
         const toSerializable = (current, ancestors = [])=>{
@@ -910,6 +930,15 @@ const runInspectZip = async ()=>{
         return JSON.stringify(toSerializable(value), null, 2);
       };
 
+      const runSingleFeat = (id, runner)=>{
+        try{
+          const result = runner();
+          tableFeatOut.textContent = safeStringify({ action: 'table_feature.single_probe', feature:id, ok:true, mode:'debug_simulation_only', mutatesPersistentState:false, result });
+        }catch(err){
+          tableFeatOut.textContent = safeStringify({ action: 'table_feature.single_probe', feature:id, ok:false, error: err?.message || String(err) });
+        }
+      };
+
       const runAllFeat = ()=>{
         const results = [];
         const probes = [
@@ -929,13 +958,62 @@ const runInspectZip = async ()=>{
         tableFeatOut.textContent = safeStringify({ action:'run_all_table_features', mode:'debug_simulation_only', mutatesPersistentState:false, results });
       };
 
+      const runScenarioCommitRerender = ()=>{
+        const steps = [];
+        try{
+          const commit = featDebug.editCommit.simulate({ rowId:'row-probe-1', colId:'col-probe-1', newValue:'scenario-value' });
+          steps.push({ step:'edit.commit', ok:true, result:commit });
+
+          const changedIds = Array.isArray(commit?.effects?.[0]?.changedIds) ? commit.effects[0].changedIds : ['row-probe-1'];
+          const rerender = featDebug.rerenderSync.simulate({ changedIds, anchorId: changedIds[0] || 'row-probe-1', reason:'scenario.commit_to_rerender' });
+          steps.push({ step:'rerender.sync', ok:true, result:rerender });
+
+          tableFeatOut.textContent = safeStringify({
+            action:'scenario.table.commit_to_rerender',
+            ok:true,
+            mode:'debug_simulation_only',
+            mutatesPersistentState:false,
+            steps
+          });
+        }catch(err){
+          tableFeatOut.textContent = safeStringify({ action:'scenario.table.commit_to_rerender', ok:false, error: err?.message || String(err), steps });
+        }
+      };
+
+      const runCommitBtn = ui.el('button','sws-btn', 'Run edit.commit');
+      runCommitBtn.title = 'Single-feature check for table.edit.commit.';
+      runCommitBtn.onclick = ()=> runSingleFeat('table.edit.commit', ()=> featDebug.editCommit.simulate({ rowId:'row-probe-1', colId:'col-probe-1', newValue:'probe' }));
+
+      const runCancelBtn = ui.el('button','sws-btn', 'Run edit.cancel');
+      runCancelBtn.title = 'Single-feature check for table.edit.cancel.';
+      runCancelBtn.onclick = ()=> runSingleFeat('table.edit.cancel', ()=> featDebug.editCancel.simulate({ rowId:'row-probe-1', colId:'col-probe-1' }));
+
+      const runRerenderBtn = ui.el('button','sws-btn', 'Run rerender.sync');
+      runRerenderBtn.title = 'Single-feature check for table.rerender.sync.';
+      runRerenderBtn.onclick = ()=> runSingleFeat('table.rerender.sync', ()=> featDebug.rerenderSync.simulate({ changedIds:['row-probe-1'], anchorId:'row-probe-1' }));
+
+      const runScenarioBtn = ui.el('button','sws-btn', 'Run scenario: edit.commit -> rerender.sync');
+      runScenarioBtn.title = 'Guided combination for common commit + rerender flow.';
+      runScenarioBtn.onclick = ()=> runScenarioCommitRerender();
+
       const runAllBtn = ui.el('button','sws-btn', 'Run all table probes (debug)');
+      runAllBtn.title = 'Bulk smoke: runs commit, cancel, rerender probes in one action.';
       runAllBtn.onclick = ()=> runAllFeat();
 
-      tableFeatRow.appendChild(runAllBtn);
-      tableFeatCard.appendChild(tableFeatInfo);
-      tableFeatCard.appendChild(tableFeatRow);
+      tableSingleRow.appendChild(runCommitBtn);
+      tableSingleRow.appendChild(runCancelBtn);
+      tableSingleRow.appendChild(runRerenderBtn);
+      tableScenarioRow.appendChild(runScenarioBtn);
+      tableBulkRow.appendChild(runAllBtn);
 
+      tableFeatCard.appendChild(tableFeatInfo);
+      tableFeatCard.appendChild(tableGuide);
+      tableFeatCard.appendChild(ui.el('div','', 'Single feature checks:'));
+      tableFeatCard.appendChild(tableSingleRow);
+      tableFeatCard.appendChild(ui.el('div','', 'Guided scenario:'));
+      tableFeatCard.appendChild(tableScenarioRow);
+      tableFeatCard.appendChild(ui.el('div','', 'Bulk smoke:'));
+      tableFeatCard.appendChild(tableBulkRow);
       tableFeatCard.appendChild(tableFeatOut);
 
       const tableApiCard = section('Table feature API registry');
