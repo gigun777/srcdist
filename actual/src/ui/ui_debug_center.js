@@ -8,13 +8,12 @@ import { runImportPipelineDryRunV2 } from '../backup_v2/backup_v2_import_pipelin
 import { buildWipePlanV2, executeWipeReplaceV2 } from '../backup_v2/backup_v2_wipe_core.js';
 import { applyImportZipV2 } from '../backup_v2/backup_v2_import_apply_core.js';
 import { resolveImportConfirmsV2, mergeSimulatedIssues } from '../backup_v2/backup_v2_confirm_core.js';
+import { createEditCommitDebugTools } from '../table/features/edit_commit/debug.js';
+import { createEditCancelDebugTools } from '../table/features/edit_cancel/debug.js';
+import { createRerenderSyncDebugTools } from '../table/features/rerender_sync/debug.js';
 
 export function openDebugCenter(){
   const SW = window.SettingsWindow;
-  if(!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function'){
-    try{ window.UI?.toast?.show?.('Debug Center недоступний (SettingsWindow не ініціалізовано)', { type:'warning' }); }catch(_){ /* ignore */ }
-    return;
-  }
 
   const buildScreen = ()=> ({
     title: 'Debug Center',
@@ -57,6 +56,9 @@ export function openDebugCenter(){
       push('SettingsWindow available', !!window.SettingsWindow);
       push('UI.toast available', !!(window.UI?.toast?.show));
       push('UI.modal available', !!(window.UI?.modal?.open));
+      push('SWS adapter available (Alternative A)', !!(window.UI?.swsAdapter));
+      push('SWS adapter route API', typeof window.UI?.swsAdapter?.setRoute === 'function');
+      push('SWS adapter open API', typeof window.UI?.swsAdapter?.open === 'function');
       push('SWS ui primitives (ctx.ui.el) available', !!(ctx?.ui?.el));
 
       // SDO / API
@@ -508,6 +510,238 @@ const runInspectZip = async ()=>{
       zipCard.appendChild(zipBtn);
       zipCard.appendChild(zipPre);
 
+      // Alternative A adapter controls (manual migration ops)
+      const adapterCard = section('Alternative A adapter controls');
+      const adapterInfo = ui.el('div','', 'Set route per screen and inspect adapter health.');
+      adapterInfo.style.marginBottom = '6px';
+      const adapterOut = ui.el('pre','');
+      adapterOut.style.whiteSpace = 'pre-wrap';
+      adapterOut.style.maxHeight = '220px';
+      adapterOut.style.overflow = 'auto';
+
+      const routesJson = document.createElement('textarea');
+      routesJson.placeholder = '{"debug.center":"sws"}';
+      routesJson.style.width = '100%';
+      routesJson.style.minHeight = '72px';
+      routesJson.style.marginBottom = '8px';
+
+      const idInput = document.createElement('input');
+      idInput.type = 'text';
+      idInput.value = 'debug.center';
+      idInput.placeholder = 'screen id (e.g. debug.center)';
+      idInput.style.width = '100%';
+      idInput.style.marginBottom = '6px';
+
+      const routeSelect = document.createElement('select');
+      routeSelect.style.width = '100%';
+      routeSelect.style.marginBottom = '8px';
+      ['sws', 'legacy'].forEach((r)=>{
+        const opt = document.createElement('option');
+        opt.value = r;
+        opt.textContent = r;
+        routeSelect.appendChild(opt);
+      });
+
+      const adapterBtnRow = ui.el('div','');
+      adapterBtnRow.style.display = 'flex';
+      adapterBtnRow.style.gap = '8px';
+      adapterBtnRow.style.flexWrap = 'wrap';
+
+      const getAdapter = ()=> window.UI?.swsAdapter || window.SWSAdapter || null;
+
+      const showState = (extra = {})=>{
+        const ad = getAdapter();
+        adapterOut.textContent = JSON.stringify({
+          hasAdapter: !!ad,
+          health: ad?.getHealth?.() || null,
+          routes: ad?.getRoutesSnapshot?.() || null,
+          ...extra
+        }, null, 2);
+      };
+
+      const setRouteBtn = ui.el('button','sws-btn', 'Set route');
+      setRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.setRoute !== 'function') throw new Error('adapter.setRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          ad.setRoute(id, routeSelect.value);
+          showState({ action: 'setRoute', id, route: routeSelect.value, ok: true });
+        }catch(err){
+          showState({ action: 'setRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const getRouteBtn = ui.el('button','sws-btn', 'Get route');
+      getRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.getRoute !== 'function') throw new Error('adapter.getRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const route = ad.getRoute(id);
+          showState({ action: 'getRoute', id, route, ok: true });
+        }catch(err){
+          showState({ action: 'getRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const healthBtn = ui.el('button','sws-btn', 'Health + routes');
+      healthBtn.onclick = ()=>showState({ action: 'health' });
+
+      const clearRouteBtn = ui.el('button','sws-btn', 'Clear route');
+      clearRouteBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.clearRoute !== 'function') throw new Error('adapter.clearRoute unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+          const removed = ad.clearRoute(id);
+          showState({ action: 'clearRoute', id, removed, ok: true });
+        }catch(err){
+          showState({ action: 'clearRoute', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const clearAllBtn = ui.el('button','sws-btn', 'Clear all routes');
+      clearAllBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.clearAllRoutes !== 'function') throw new Error('adapter.clearAllRoutes unavailable');
+          ad.clearAllRoutes();
+          showState({ action: 'clearAllRoutes', ok: true });
+        }catch(err){
+          showState({ action: 'clearAllRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const exportRoutesBtn = ui.el('button','sws-btn', 'Export routes JSON');
+      exportRoutesBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.exportRoutes !== 'function') throw new Error('adapter.exportRoutes unavailable');
+          routesJson.value = JSON.stringify(ad.exportRoutes(), null, 2);
+          showState({ action: 'exportRoutes', ok: true });
+        }catch(err){
+          showState({ action: 'exportRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const importRoutesBtn = ui.el('button','sws-btn', 'Import routes JSON');
+      importRoutesBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.importRoutes !== 'function') throw new Error('adapter.importRoutes unavailable');
+          const parsed = JSON.parse(String(routesJson.value || '{}'));
+          const count = ad.importRoutes(parsed, { replace: true });
+          showState({ action: 'importRoutes', ok: true, imported: count });
+        }catch(err){
+          showState({ action: 'importRoutes', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      const probeOpenBtn = ui.el('button','sws-btn', 'Probe open (current id)');
+      probeOpenBtn.onclick = ()=>{
+        try{
+          const ad = getAdapter();
+          if(!ad || typeof ad.open !== 'function') throw new Error('adapter.open unavailable');
+          const id = String(idInput.value || '').trim();
+          if(!id) throw new Error('screen id is empty');
+
+          const res = ad.open({
+            screenId: id,
+            sws: {
+              title: `Adapter probe: ${id}`,
+              subtitle: 'Temporary probe screen',
+              canSave: ()=>false,
+              saveLabel: null,
+              content: (ctx)=>{
+                const box = ctx.ui.el('div','sws-card');
+                box.appendChild(ctx.ui.el('div','sws-card-title', 'Adapter probe'));
+                box.appendChild(ctx.ui.el('div','', `Opened via adapter for screenId: ${id}`));
+                return box;
+              }
+            }
+          });
+          showState({ action: 'probeOpen', id, result: res, ok: !!res?.ok });
+        }catch(err){
+          showState({ action: 'probeOpen', ok: false, error: err?.message || String(err) });
+        }
+      };
+
+      adapterBtnRow.appendChild(setRouteBtn);
+      adapterBtnRow.appendChild(getRouteBtn);
+      adapterBtnRow.appendChild(clearRouteBtn);
+      adapterBtnRow.appendChild(clearAllBtn);
+      adapterBtnRow.appendChild(exportRoutesBtn);
+      adapterBtnRow.appendChild(importRoutesBtn);
+      adapterBtnRow.appendChild(probeOpenBtn);
+      adapterBtnRow.appendChild(healthBtn);
+
+      adapterCard.appendChild(adapterInfo);
+      adapterCard.appendChild(idInput);
+      adapterCard.appendChild(routeSelect);
+      adapterCard.appendChild(routesJson);
+      adapterCard.appendChild(adapterBtnRow);
+      adapterCard.appendChild(adapterOut);
+      showState();
+
+
+      // Table feature debug probes (table-first architecture)
+      const tableFeatCard = section('Table feature debug probes');
+      const tableFeatInfo = ui.el('div','', 'Run isolated table feature simulations (edit.commit / edit.cancel / rerender.sync).');
+      tableFeatInfo.style.marginBottom = '6px';
+      const tableFeatOut = ui.el('pre','');
+      tableFeatOut.style.whiteSpace = 'pre-wrap';
+      tableFeatOut.style.maxHeight = '220px';
+      tableFeatOut.style.overflow = 'auto';
+
+      const featDebug = {
+        editCommit: createEditCommitDebugTools(),
+        editCancel: createEditCancelDebugTools(),
+        rerenderSync: createRerenderSyncDebugTools()
+      };
+
+      const tableFeatRow = ui.el('div','');
+      tableFeatRow.style.display = 'flex';
+      tableFeatRow.style.gap = '8px';
+      tableFeatRow.style.flexWrap = 'wrap';
+
+      const safeStringify = (value)=>{
+        const seen = new WeakSet();
+        return JSON.stringify(value, (key, current)=>{
+          if (current && typeof current === 'object') {
+            if (seen.has(current)) return '[Circular]';
+            seen.add(current);
+          }
+          return current;
+        }, 2);
+      };
+
+      const runFeat = (id, fn)=>{
+        try{
+          const run = fn();
+          tableFeatOut.textContent = safeStringify({ feature:id, ok:true, result:run });
+        }catch(err){
+          tableFeatOut.textContent = safeStringify({ feature:id, ok:false, error: err?.message || String(err) });
+        }
+      };
+
+      const b1 = ui.el('button','sws-btn', 'Run edit.commit');
+      b1.onclick = ()=> runFeat('table.edit.commit', ()=> featDebug.editCommit.simulate({ rowId:'row-probe-1', colId:'col-probe-1', newValue:'probe' }));
+      const b2 = ui.el('button','sws-btn', 'Run edit.cancel');
+      b2.onclick = ()=> runFeat('table.edit.cancel', ()=> featDebug.editCancel.simulate({ rowId:'row-probe-1', colId:'col-probe-1' }));
+      const b3 = ui.el('button','sws-btn', 'Run rerender.sync');
+      b3.onclick = ()=> runFeat('table.rerender.sync', ()=> featDebug.rerenderSync.simulate({ changedIds:['row-probe-1'], anchorId:'row-probe-1' }));
+
+      tableFeatRow.appendChild(b1);
+      tableFeatRow.appendChild(b2);
+      tableFeatRow.appendChild(b3);
+      tableFeatCard.appendChild(tableFeatInfo);
+      tableFeatCard.appendChild(tableFeatRow);
+      tableFeatCard.appendChild(tableFeatOut);
+
       // Runtime loaded dist assets
       const assetsCard = section('Runtime loaded dist assets');
       const listWrap = ui.el('div','');
@@ -563,12 +797,33 @@ const runInspectZip = async ()=>{
       root.appendChild(wipeCard);
       root.appendChild(applyCard);
       root.appendChild(zipCard);
+      root.appendChild(adapterCard);
+      root.appendChild(tableFeatCard);
       root.appendChild(assetsCard);
       return root;
     },
     onSave: ()=>{},
     onClose: ()=>{}
   });
+
+  const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+  if (adapter && typeof adapter.open === 'function') {
+    const res = adapter.open({
+      screenId: 'debug.center',
+      swsOpen: (sw) => {
+        if (typeof sw.openCustomRoot !== 'function' || typeof sw.push !== 'function') {
+          throw new Error('SettingsWindow custom root API is unavailable');
+        }
+        sw.openCustomRoot(() => sw.push(buildScreen()));
+      }
+    });
+    if (res?.ok) return;
+  }
+
+  if(!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function'){
+    try{ window.UI?.toast?.show?.('Debug Center недоступний (SettingsWindow не ініціалізовано)', { type:'warning' }); }catch(_){ /* ignore */ }
+    return;
+  }
 
   SW.openCustomRoot(()=> SW.push(buildScreen()));
 }
