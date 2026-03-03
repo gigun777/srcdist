@@ -23,6 +23,7 @@ import "./ui_modal.js";
 import "./ui_form.js";
 import "./ui_toast.js";
 import "./ui_backup.js";
+import { createSwsAdapter } from "./sws_v2/sws_adapter.js";
 
 // Settings subsystem (also legacy IIFE modules).
 
@@ -72,6 +73,21 @@ export async function bootstrap(options = {}) {
       if (tryAttachTransfer() || attempts > 50) clearInterval(t);
     }, 100);
   }
+
+
+  // Strangler Adapter (Alternative A): one router for old/new modal channels.
+  const swsAdapter = createSwsAdapter({
+    getSettingsWindow: () => global.SettingsWindow || null,
+    openLegacyModal: (legacyPayload) => {
+      const modal = global.UI?.modal;
+      if (!modal || typeof modal.open !== 'function') {
+        throw new Error('Legacy modal channel is unavailable (UI.modal.open missing)');
+      }
+      return modal.open(legacyPayload);
+    }
+  });
+  UI.swsAdapter = swsAdapter;
+  global.SWSAdapter = swsAdapter;
 
   // 2) Theme init (ESM theme runtime)
   // Note: current theme.js persists to storage by design. We still initialize early here.
