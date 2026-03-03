@@ -708,12 +708,23 @@ const runInspectZip = async ()=>{
       tableFeatRow.style.gap = '8px';
       tableFeatRow.style.flexWrap = 'wrap';
 
+      const safeStringify = (value)=>{
+        const seen = new WeakSet();
+        return JSON.stringify(value, (key, current)=>{
+          if (current && typeof current === 'object') {
+            if (seen.has(current)) return '[Circular]';
+            seen.add(current);
+          }
+          return current;
+        }, 2);
+      };
+
       const runFeat = (id, fn)=>{
         try{
           const run = fn();
-          tableFeatOut.textContent = JSON.stringify({ feature:id, ok:true, result:run }, null, 2);
+          tableFeatOut.textContent = safeStringify({ feature:id, ok:true, result:run });
         }catch(err){
-          tableFeatOut.textContent = JSON.stringify({ feature:id, ok:false, error: err?.message || String(err) }, null, 2);
+          tableFeatOut.textContent = safeStringify({ feature:id, ok:false, error: err?.message || String(err) });
         }
       };
 
