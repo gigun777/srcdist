@@ -161,7 +161,8 @@ test('sws adapter can preview preset routes without mutating adapter state', () 
   assert.deepEqual(preset, {
     'transfer.execute': 'sws',
     'backup.import': 'sws',
-    'debug.center': 'sws'
+    'debug.center': 'sws',
+    'quicknav.root': 'sws'
   });
   assert.deepEqual(adapter.getRoutesSnapshot(), {});
 });

@@ -163,7 +163,6 @@ function openQuickNavRoot({ sdo }) {
   const QN = window.SWSQuickNav;
   if (!SW || !QN) {
     console.warn('QuickNav: SettingsWindow or SWSQuickNav not loaded');
-    return;
   }
 
   const buildJTreeSnapshot = (st) => {
@@ -412,6 +411,28 @@ function openQuickNavRoot({ sdo }) {
   };
 
   const open = async () => {
+    const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+    if (adapter && typeof adapter.open === 'function') {
+      const legacyContent = document.createElement('div');
+      legacyContent.textContent = 'QuickNav доступний лише через SWS у цій версії.';
+      const adapterResult = adapter.open({
+        screenId: 'quicknav.root',
+        swsOpen: () => {
+          if (!SW || !QN) throw new Error('QuickNav SWS dependencies are unavailable');
+          return openSwsRoot();
+        },
+        legacy: { title: 'QuickNav', contentNode: legacyContent, closeOnOverlay: true }
+      });
+      if (adapterResult?.ok) return;
+    }
+
+    if (!(await openSwsRoot())) {
+      console.warn('QuickNav: unable to open (missing SWS dependencies and adapter fallback)');
+    }
+  };
+
+  const openSwsRoot = async () => {
+    if (!SW || !QN) return false;
     SW.openCustomRoot(() => {
       QN.openQuickNavScreen({
         getData: async () => {

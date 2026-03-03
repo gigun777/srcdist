@@ -8,7 +8,8 @@ const DEFAULT_PRESETS = Object.freeze({
   modern_sws_core: Object.freeze({
     'transfer.execute': 'sws',
     'backup.import': 'sws',
-    'debug.center': 'sws'
+    'debug.center': 'sws',
+    'quicknav.root': 'sws'
   })
 });
 
