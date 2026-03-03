@@ -71,6 +71,13 @@ async function syncAlternativeAArtifacts() {
     await fs.copyFile(srcDebugCenter, distDebugCenter);
   }
 
+  const srcSettingsShell = path.join(projectRoot, 'src/ui/settings/settings_shell_modal.js');
+  const distSettingsShell = path.join(projectRoot, 'dist/ui/settings/settings_shell_modal.js');
+  if (await pathExists(srcSettingsShell)) {
+    await fs.mkdir(path.dirname(distSettingsShell), { recursive: true });
+    await fs.copyFile(srcSettingsShell, distSettingsShell);
+  }
+
   const distBootstrap = path.join(projectRoot, 'dist/ui/ui_bootstrap_esm.js');
   if (!(await pathExists(distBootstrap))) return;
 
