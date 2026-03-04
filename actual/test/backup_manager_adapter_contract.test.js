@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const filePath = path.resolve('src/ui/backup/backup_manager.js');
+const filePath = path.resolve('src/ui/ui_core.js');
 
 test('backup manager modal is wired through SWS adapter with dedicated screen id', () => {
   const source = fs.readFileSync(filePath, 'utf8');

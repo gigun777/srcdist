@@ -11,7 +11,6 @@ import { resolveImportConfirmsV2, mergeSimulatedIssues } from '../backup_v2/back
 import { createEditCommitDebugTools } from '../table/features/edit_commit/debug.js';
 import { createEditCancelDebugTools } from '../table/features/edit_cancel/debug.js';
 import { createRerenderSyncDebugTools } from '../table/features/rerender_sync/debug.js';
-import { getTableEventLog, clearTableEventLog } from '../table/core/event_log.js';
 import { listTableFeatureApis, validateTableFeatureApi } from '../table/core/table_feature_registry.js';
 
 export function openDebugCenter(){
@@ -1017,55 +1016,6 @@ const runInspectZip = async ()=>{
       tableFeatCard.appendChild(tableBulkRow);
       tableFeatCard.appendChild(tableFeatOut);
 
-      // Table runtime debug: event log + last datasetTx
-      const tableRuntimeCard = section('Table runtime debug log');
-      const tableRuntimeInfo = ui.el('div','', 'Показує журнал подій таблиці (who/what/ok) та останній datasetTx debug (load→mutate→save).');
-      tableRuntimeInfo.style.marginBottom = '6px';
-
-      const tableRuntimeOut = ui.el('pre','');
-      tableRuntimeOut.style.whiteSpace = 'pre-wrap';
-      tableRuntimeOut.style.maxHeight = '260px';
-      tableRuntimeOut.style.overflow = 'auto';
-
-      const tableRuntimeRow = ui.el('div','');
-      tableRuntimeRow.style.display = 'flex';
-      tableRuntimeRow.style.gap = '8px';
-      tableRuntimeRow.style.flexWrap = 'wrap';
-      tableRuntimeRow.style.marginBottom = '6px';
-
-      const refreshRuntimeBtn = ui.el('button','sws-btn', 'Refresh runtime log');
-      const clearRuntimeBtn = ui.el('button','sws-btn', 'Clear event log');
-
-      const renderRuntime = ()=>{
-        const bus = window.__tableFeatureDebug || {};
-        const lastDatasetTx = bus.datasetTx || null;
-        const lastDatasetTxDebug = bus.datasetTxDebug || null;
-        const events = getTableEventLog();
-        tableRuntimeOut.textContent = safeStringify({
-          action: 'table_runtime_debug',
-          lastDatasetTx,
-          lastDatasetTxDebug,
-          eventsCount: events.length,
-          eventsTail: events.slice(-80)
-        });
-      };
-
-      refreshRuntimeBtn.onclick = ()=> renderRuntime();
-      clearRuntimeBtn.onclick = ()=>{
-        clearTableEventLog();
-        renderRuntime();
-      };
-
-      tableRuntimeRow.appendChild(refreshRuntimeBtn);
-      tableRuntimeRow.appendChild(clearRuntimeBtn);
-      tableRuntimeCard.appendChild(tableRuntimeInfo);
-      tableRuntimeCard.appendChild(tableRuntimeRow);
-      tableRuntimeCard.appendChild(tableRuntimeOut);
-
-      // Initial render
-      try { renderRuntime(); } catch {}
-
-
       const tableApiCard = section('Table feature API registry');
       const tableApiInfo = ui.el('div','', 'Inspect registered table feature contracts used by adapter/debug flows.');
       tableApiInfo.style.marginBottom = '6px';
@@ -1215,7 +1165,6 @@ const runInspectZip = async ()=>{
       root.appendChild(zipCard);
       root.appendChild(adapterCard);
       root.appendChild(tableFeatCard);
-      root.appendChild(tableRuntimeCard);
       root.appendChild(tableApiCard);
       root.appendChild(verifyCard);
       root.appendChild(assetsCard);

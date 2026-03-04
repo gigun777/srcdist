@@ -254,55 +254,78 @@ export function attachTransferUI(ctx){
 
   // Full-view (table-like) picker: user selects a row by DOUBLE CLICK.
   // This is a lightweight approximation of "full journal view" until we embed the real renderer.
-  async function pickTargetRecordIdFull({ journalId, colKeys, colLabels }){
+  async function pickTargetRecordIdFull({ SettingsWindow, journalId, colKeys, colLabels }){
     const ds = await tableStore.getDataset(journalId);
     const records = ensureArray(ds?.records);
-    const wrap = createEl('div', { style:'display:flex;flex-direction:column;gap:10px;min-width:680px;max-width:960px;max-height:70vh;' });
-    wrap.appendChild(createEl('div', { style:'font-weight:700;' }, 'Оберіть строку (подвійний клік)'));
 
-    const table = createEl('div', { style:'border:1px solid rgba(0,0,0,.12);border-radius:10px;overflow:auto;flex:1;background:#fff;' });
-    const grid = createEl('div', { style:`display:grid;grid-template-columns:${ensureArray(colKeys).map(()=> 'minmax(140px,1fr)').join(' ')};gap:0;border-collapse:collapse;` });
-
-    // header
-    for(let i=0;i<colKeys.length;i++){
-      const th = createEl('div', { style:'position:sticky;top:0;background:rgba(0,0,0,.04);padding:8px 10px;font-weight:600;border-bottom:1px solid rgba(0,0,0,.12);' }, colLabels?.[i] ?? colKeys[i]);
-      grid.appendChild(th);
+    if(!SettingsWindow?.push || !SettingsWindow?.pop){
+      return records?.[0]?.id ?? null;
     }
-    // rows
-    for(const r of records){
-      for(let i=0;i<colKeys.length;i++){
-        const k = colKeys[i];
-        const v = r?.cells?.[k];
-        const td = createEl('div', { style:'padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);border-right:1px solid rgba(0,0,0,.04);white-space:pre-wrap;cursor:default;', 'data-id': r.id }, String(v ?? ''));
-        // store record id for dblclick
-        td.ondblclick = ()=>{}; // will be overridden by container handler
-        grid.appendChild(td);
-      }
-    }
-    table.appendChild(grid);
-    wrap.appendChild(table);
-
-    wrap.appendChild(createEl('div', { style:'display:flex;justify-content:flex-end;gap:10px;' }, [
-      createEl('button', { type:'button', 'data-act':'cancel' }, 'Скасувати')
-    ]));
 
     return await new Promise((resolve)=>{
-      let modalRec=null;
-      const close=()=>{ try{ modalRec?.close?.(); }catch{} };
-      wrap.addEventListener('click',(e)=>{
-        const btn=e.target.closest('button');
-        if(!btn) return;
-        const act=btn.getAttribute('data-act');
-        if(act==='cancel'){ close(); resolve(null); }
-      });
-      wrap.addEventListener('dblclick',(e)=>{
-        const cell = e.target.closest('[data-id]');
-        const id = cell?.getAttribute?.('data-id');
-        if(id){ close(); resolve(id); }
-      });
+      let settled = false;
+      const done = (id)=>{
+        if(settled) return;
+        settled = true;
+        try{ SettingsWindow.pop(); }catch(_){ }
+        resolve(id ?? null);
+      };
 
-      modalRec = UI.modal?.open ? UI.modal.open({ title:'Вибір строки', contentNode: wrap }) : null;
-      if(!modalRec) resolve(records?.[0]?.id ?? null);
+      SettingsWindow.push({
+        title: 'Вибір строки',
+        subtitle: 'Оберіть строку призначення',
+        saveLabel: 'OK',
+        canSave: ()=> false,
+        content: (ctx)=>{
+          const ui = ctx.ui;
+          const wrap = ui.el('div','');
+          wrap.style.display='flex';
+          wrap.style.flexDirection='column';
+          wrap.style.gap='8px';
+
+          const search = document.createElement('input');
+          search.type = 'search';
+          search.placeholder = 'Пошук по строках…';
+          search.className = 'sws-input';
+
+          const list = ui.el('div','');
+          list.style.display='flex';
+          list.style.flexDirection='column';
+          list.style.gap='6px';
+          list.style.maxHeight='58vh';
+          list.style.overflow='auto';
+
+          const labels = ensureArray(colLabels).length ? colLabels : ensureArray(colKeys);
+          const rowText = (r)=> ensureArray(colKeys).map((k, i)=> `${labels[i] ?? k}: ${String(r?.cells?.[k] ?? '')}`).join(' | ');
+
+          const render = ()=>{
+            list.innerHTML='';
+            const q = String(search.value || '').trim().toLowerCase();
+            const rows = records.filter((r)=> !q || rowText(r).toLowerCase().includes(q));
+            if(!rows.length){
+              list.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
+              return;
+            }
+            for(const r of rows){
+              const btn = ui.el('button','sws-qnav-btn', rowText(r));
+              btn.type = 'button';
+              btn.style.textAlign='left';
+              btn.onclick = ()=> done(r?.id ?? null);
+              list.appendChild(btn);
+            }
+          };
+
+          const cancelBtn = ui.el('button','sws-btn','Скасувати');
+          cancelBtn.onclick = ()=> done(null);
+
+          search.addEventListener('input', render);
+          wrap.appendChild(search);
+          wrap.appendChild(list);
+          wrap.appendChild(cancelBtn);
+          render();
+          return wrap;
+        }
+      });
     });
   }
 
@@ -564,167 +587,14 @@ const resolveDestCandidates = (tpl)=>{
 
 const getTemplateById = (id)=> ensureArray(transferState.templates).find(t => t?.id === id) || null;
 
-function computeVisibleSpacesFromCandidates(cands){
-  const spaces = ensureArray(stateNow.spaces);
-  const byId = {};
-  for(const sp of spaces){
-    const sid = sp?.id ?? sp?.key;
-    if(!sid) continue;
-    byId[sid] = {
-      id: sid,
-      title: sp?.title ?? sp?.name ?? sid,
-      parentId: sp?.parentId ?? null,
-      createdAt: sp?.createdAt ?? null
-    };
-  }
-
-  const visible = new Set();
-  const addAnc = (sid)=>{
-    let cur = sid;
-    let guard = 0;
-    while(cur && byId[cur] && guard < 50){
-      visible.add(cur);
-      cur = byId[cur].parentId;
-      guard++;
-    }
-  };
-  for(const c of ensureArray(cands)){
-    if(c?.spaceId) addAnc(c.spaceId);
-  }
-
-  const children = {};
-  for(const id of visible){
-    const pid = byId[id]?.parentId ?? null;
-    if(pid && visible.has(pid)){
-      (children[pid] ||= []).push(id);
-    }
-  }
-
-  const rootIds = Array.from(visible).filter(id=>{
-    const pid = byId[id]?.parentId ?? null;
-    return !pid || !visible.has(pid);
-  });
-
-  const sortIds = (ids)=>{
-    ids.sort((a,b)=>{
-      const A = byId[a] || {};
-      const B = byId[b] || {};
-      const ca = A.createdAt ? Date.parse(A.createdAt) : NaN;
-      const cb = B.createdAt ? Date.parse(B.createdAt) : NaN;
-      const ha = Number.isFinite(ca);
-      const hb = Number.isFinite(cb);
-      if(ha && hb && ca !== cb) return ca - cb;
-      if(ha && !hb) return -1;
-      if(!ha && hb) return 1;
-      return String(A.title||'').localeCompare(String(B.title||''));
-    });
-  };
-  sortIds(rootIds);
-  for(const pid of Object.keys(children)) sortIds(children[pid]);
-
-  const numbering = computeTreeNumbering(rootIds, (id)=> children[id] || []);
-  return { byId, children, rootIds, numbering, visible };
-}
-
-function buildJournalTreeForSpace(spaceId, candidateIds){
-  const list = ensureArray(stateNow.journals).filter(j => (j?.spaceId ?? null) === spaceId);
-
-  const nodes = {};
-  const meta = {};
-  for(const j of list){
-    const id = j?.id ?? j?.key;
-    if(!id) continue;
-    nodes[id] = {
-      id,
-      title: j?.title ?? j?.name ?? id,
-      parentId: j?.parentId ?? null,
-      children: []
-    };
-    meta[id] = {
-      idx: (typeof j?.index === 'number' ? j.index : 1e9),
-      title: String(j?.title ?? j?.name ?? id)
-    };
-  }
-
-  const topIds = [];
-  for(const j of list){
-    const id = j?.id ?? j?.key;
-    if(!id || !nodes[id]) continue;
-    const pid = j?.parentId ?? null;
-    if(pid && nodes[pid]) nodes[pid].children.push(id);
-    else topIds.push(id);
-  }
-
-  const sortIds = (ids)=>{
-    ids.sort((a,b)=>{
-      const A = meta[a] || { idx: 1e9, title: '' };
-      const B = meta[b] || { idx: 1e9, title: '' };
-      if(A.idx !== B.idx) return A.idx - B.idx;
-      return A.title.localeCompare(B.title);
-    });
-  };
-  sortIds(topIds);
-  for(const id of Object.keys(nodes)) sortIds(nodes[id].children);
-
-  const candSet = new Set(ensureArray(candidateIds).filter(Boolean));
-  const visible = new Set();
-  const addAnc = (jid)=>{
-    let cur = jid;
-    let guard = 0;
-    while(cur && nodes[cur] && guard < 50){
-      visible.add(cur);
-      cur = nodes[cur].parentId;
-      guard++;
-    }
-  };
-  for(const id of candSet) addAnc(id);
-
-  const children = {};
-  for(const id of visible){
-    const pid = nodes[id]?.parentId ?? null;
-    if(pid && visible.has(pid)){
-      (children[pid] ||= []).push(id);
-    }
-  }
-
-  const rootIds = Array.from(visible).filter(id=>{
-    const pid = nodes[id]?.parentId ?? null;
-    return !pid || !visible.has(pid);
-  });
-
-  const numbering = computeTreeNumbering(
-    rootIds.slice().sort((a,b)=>{
-      const A = meta[a] || { idx:1e9, title:'' };
-      const B = meta[b] || { idx:1e9, title:'' };
-      if(A.idx !== B.idx) return A.idx - B.idx;
-      return A.title.localeCompare(B.title);
-    }),
-    (id)=> (children[id] || []).slice().sort((a,b)=>{
-      const A = meta[a] || { idx:1e9, title:'' };
-      const B = meta[b] || { idx:1e9, title:'' };
-      if(A.idx !== B.idx) return A.idx - B.idx;
-      return A.title.localeCompare(B.title);
-    })
-  );
-
-  return { nodes, meta, visible, children, rootIds, numbering };
-}
-
 const ensureDest = (ctxObj)=>{
   const tpl = getTemplateById(ctxObj?.templateId);
   const cands = resolveDestCandidates(tpl);
-
-  // Space tree visibility comes from candidate journals only
-  const spacesSnap = computeVisibleSpacesFromCandidates(cands);
-  const candById = new Map(cands.map(c=>[c.id, c]));
-  const impliedSpace = ctxObj?.destJournalId ? (candById.get(ctxObj.destJournalId)?.spaceId ?? null) : null;
-  const firstCandSpace = cands.find(c=>c?.spaceId)?.spaceId ?? null;
-
-  if(!ctxObj?.destSpaceId){
-    ctxObj.destSpaceId = impliedSpace || firstCandSpace || spacesSnap.rootIds[0] || null;
+  if(!ctxObj?.destJournalId){
+    if(ctxObj) ctxObj.destJournalId = cands?.[0]?.id ?? null;
   }
-  if(ctxObj?.destSpaceId && spacesSnap.visible && spacesSnap.visible.size && !spacesSnap.visible.has(ctxObj.destSpaceId)){
-    ctxObj.destSpaceId = impliedSpace || firstCandSpace || spacesSnap.rootIds[0] || null;
+  if(ctxObj?.destJournalId && cands.length && !cands.some(j => j.id === ctxObj.destJournalId)){
+    if(ctxObj) ctxObj.destJournalId = cands[0]?.id ?? null;
   }
 
   const candsInSpace = cands.filter(c => (c?.spaceId ?? null) === (ctxObj?.destSpaceId ?? null));
@@ -763,7 +633,7 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
     const tplSelect = ui.select({
       value: ctx2.templateId,
       options: tplOptions,
-      onChange: (v)=>{ ctx2.templateId = v; ctx2.destSpaceId = null; ctx2.destJournalId = null; renderTree(); renderPreview(); }
+      onChange: (v)=>{ ctx2.templateId = v; ctx2.destJournalId = null; renderTree(); renderPreview(); }
     });
     const scenarioSelect = ui.select({
       value: ctx2.scenario,
@@ -834,226 +704,89 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
     });
 
     function renderTree(){
-      treeHost.innerHTML = '';
+  treeHost.innerHTML = '';
+      const tpl = getTemplateById(ctx2.templateId);
+      const cands = ensureDest(ctx2);
 
-      const { tpl, cands, candsInSpace, spacesSnap } = ensureDest(ctx2);
+  if(!tpl){
+    treeHost.appendChild(ui.el('div','', 'Шаблон не обрано'));
+    return;
+  }
+  if(!cands || cands.length === 0){
+    treeHost.appendChild(ui.el('div','', 'Немає журналів, що відповідають шаблону призначення'));
+    return;
+  }
 
-      if(!tpl){
-        treeHost.appendChild(ui.el('div','', 'Шаблон не обрано'));
-        return;
-      }
-      if(!cands || cands.length === 0){
-        treeHost.appendChild(ui.el('div','', 'Немає журналів, що відповідають шаблону призначення'));
-        return;
-      }
-      if(!spacesSnap?.visible || spacesSnap.visible.size === 0){
-        treeHost.appendChild(ui.el('div','', 'Немає просторів з журналами призначення'));
-        return;
-      }
+  // Search + list (active immediately)
+  const wrap = ui.el('div','');
+  wrap.style.display = 'flex';
+  wrap.style.flexDirection = 'column';
+  wrap.style.gap = '8px';
 
-      const split = ui.el('div','');
-      split.style.display = 'grid';
-      split.style.gridTemplateColumns = '1fr 1fr';
-      split.style.gap = '12px';
-      split.style.alignItems = 'start';
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.placeholder = 'Пошук журналу…';
+  search.className = 'sws-input';
+  search.style.width = '100%';
 
-      // ---- Left pane: Spaces ----
-      const paneSpaces = ui.el('div','');
-      paneSpaces.style.display = 'flex';
-      paneSpaces.style.flexDirection = 'column';
-      paneSpaces.style.gap = '8px';
+  const list = ui.el('div','');
+  list.style.display = 'flex';
+  list.style.flexDirection = 'column';
+  list.style.gap = '6px';
+  list.style.border = '1px solid rgba(0,0,0,.12)';
+  list.style.borderRadius = '10px';
+  list.style.padding = '10px';
+  list.style.maxHeight = '260px';
+  list.style.overflow = 'auto';
 
-      const spHead = ui.el('div','sws-muted', 'Простори');
-      const spSearch = document.createElement('input');
-      spSearch.type = 'search';
-      spSearch.placeholder = 'Пошук простору…';
-      spSearch.className = 'sws-input';
-      spSearch.style.width = '100%';
+  const getDepth = (id)=> (String(id||'').split('.').length - 1);
 
-      const spList = ui.el('div','');
-      spList.style.display = 'flex';
-      spList.style.flexDirection = 'column';
-      spList.style.gap = '6px';
-      spList.style.border = '1px solid rgba(0,0,0,.12)';
-      spList.style.borderRadius = '10px';
-      spList.style.padding = '10px';
-      spList.style.maxHeight = '320px';
-      spList.style.overflow = 'auto';
+  const renderList = ()=>{
+    list.innerHTML = '';
+    const q = String(search.value||'').trim().toLowerCase();
 
-      paneSpaces.appendChild(spHead);
-      paneSpaces.appendChild(spSearch);
-      paneSpaces.appendChild(spList);
+    const rows = (cands||[])
+      .slice()
+      .sort((a,b)=>String(a.id||'').localeCompare(String(b.id||'')))
+      .filter(j=>{
+        if(!q) return true;
+        const t = (j.title ?? j.id ?? '').toString().toLowerCase();
+        const i = (j.id ?? '').toString().toLowerCase();
+        return t.includes(q) || i.includes(q);
+      });
 
-      // ---- Right pane: Journals in selected space ----
-      const paneJournals = ui.el('div','');
-      paneJournals.style.display = 'flex';
-      paneJournals.style.flexDirection = 'column';
-      paneJournals.style.gap = '8px';
-
-      const jHead = ui.el('div','sws-muted', 'Журнали');
-      const jSearch = document.createElement('input');
-      jSearch.type = 'search';
-      jSearch.placeholder = 'Пошук журналу…';
-      jSearch.className = 'sws-input';
-      jSearch.style.width = '100%';
-
-      const jList = ui.el('div','');
-      jList.style.display = 'flex';
-      jList.style.flexDirection = 'column';
-      jList.style.gap = '6px';
-      jList.style.border = '1px solid rgba(0,0,0,.12)';
-      jList.style.borderRadius = '10px';
-      jList.style.padding = '10px';
-      jList.style.maxHeight = '320px';
-      jList.style.overflow = 'auto';
-
-      paneJournals.appendChild(jHead);
-      paneJournals.appendChild(jSearch);
-      paneJournals.appendChild(jList);
-
-      split.appendChild(paneSpaces);
-      split.appendChild(paneJournals);
-      treeHost.appendChild(split);
-
-      const norm = (v)=>String(v||'').toLowerCase().trim();
-
-      function renderSpaces(){
-        spList.innerHTML = '';
-        const q = norm(spSearch.value);
-
-        // Build search-visible set: show matches + ancestors
-        const visible = new Set();
-        const markAnc = (sid)=>{
-          let cur = sid;
-          let guard = 0;
-          while(cur && spacesSnap.byId[cur] && guard < 50){
-            visible.add(cur);
-            cur = spacesSnap.byId[cur].parentId;
-            guard++;
-          }
-        };
-        if(q){
-          for(const sid of spacesSnap.visible){
-            const t = norm(spacesSnap.byId[sid]?.title);
-            if(t.includes(q)) markAnc(sid);
-          }
-        } else {
-          for(const sid of spacesSnap.visible) visible.add(sid);
-        }
-
-        const renderNode = (sid, depth)=>{
-          if(!visible.has(sid)) return;
-          const sp = spacesSnap.byId[sid];
-          const num = spacesSnap.numbering?.get?.(sid) || '';
-          const label = num ? `${num} ${sp?.title ?? sid}` : (sp?.title ?? sid);
-
-          const btn = ui.el('button','sws-qnav-btn', label);
-          btn.type = 'button';
-          btn.style.textAlign = 'left';
-          btn.style.marginLeft = (depth * 14) + 'px';
-          if(sid === ctx2.destSpaceId) btn.classList.add('sws-qnav-active');
-          btn.onclick = ()=>{
-            ctx2.destSpaceId = sid;
-            ctx2.destJournalId = null;
-            ensureDest(ctx2);
-            renderSpaces();
-            renderJournals();
-            renderPreview();
-          };
-          spList.appendChild(btn);
-
-          const kids = (spacesSnap.children[sid] || []).filter(id=>visible.has(id));
-          for(const cid of kids) renderNode(cid, depth+1);
-        };
-
-        for(const rid of spacesSnap.rootIds){
-          renderNode(rid, 0);
-        }
-
-        if(!spList.childElementCount){
-          spList.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
-        }
-      }
-
-      function renderJournals(){
-        jList.innerHTML = '';
-        const sid = ctx2.destSpaceId;
-        if(!sid){
-          jList.appendChild(ui.el('div','sws-muted','Оберіть простір зліва'));
-          return;
-        }
-
-        const ids = candsInSpace.map(c=>c.id);
-        if(!ids.length){
-          jList.appendChild(ui.el('div','sws-muted','У цьому просторі немає журналів, що відповідають шаблону призначення. Оберіть інший (під)простір.'));
-          return;
-        }
-
-        const jtree = buildJournalTreeForSpace(sid, ids);
-        const q = norm(jSearch.value);
-
-        // Search-visible set: matches + ancestors
-        const visible = new Set();
-        const markAnc = (jid)=>{
-          let cur = jid;
-          let guard = 0;
-          while(cur && jtree.nodes[cur] && guard < 50){
-            visible.add(cur);
-            cur = jtree.nodes[cur].parentId;
-            guard++;
-          }
-        };
-        if(q){
-          for(const jid of jtree.visible){
-            const t = norm(jtree.nodes[jid]?.title);
-            if(t.includes(q)) markAnc(jid);
-          }
-        } else {
-          for(const jid of jtree.visible) visible.add(jid);
-        }
-
-        const renderNode = (jid, depth)=>{
-          if(!visible.has(jid)) return;
-          const n = jtree.nodes[jid];
-          const num = jtree.numbering?.get?.(jid) || '';
-          const label = num ? `${num} ${n?.title ?? jid}` : (n?.title ?? jid);
-
-          const btn = ui.el('button','sws-qnav-btn', label);
-          btn.type = 'button';
-          btn.style.textAlign = 'left';
-          btn.style.marginLeft = (depth * 14) + 'px';
-          if(jid === ctx2.destJournalId) btn.classList.add('sws-qnav-active');
-          btn.onclick = ()=>{
-            ctx2.destJournalId = jid;
-            ensureDest(ctx2);
-            renderJournals();
-            renderPreview();
-          };
-          jList.appendChild(btn);
-
-          const kids = (jtree.children[jid] || []).filter(id=>visible.has(id));
-          for(const cid of kids) renderNode(cid, depth+1);
-        };
-
-        // roots (in visible set)
-        const roots = (jtree.rootIds || []).filter(id=>visible.has(id));
-        // stable sort by numbering if present
-        roots.sort((a,b)=>String(jtree.numbering?.get?.(a) || '').localeCompare(String(jtree.numbering?.get?.(b) || '')));
-        for(const rid of roots){
-          renderNode(rid, 0);
-        }
-
-        if(!jList.childElementCount){
-          jList.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
-        }
-      }
-
-      spSearch.addEventListener('input', ()=>{ renderSpaces(); });
-      jSearch.addEventListener('input', ()=>{ renderJournals(); });
-
-      renderSpaces();
-      renderJournals();
+    if(!rows.length){
+      list.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
+      return;
     }
+
+    for(const j of rows){
+      const btn = ui.el('button','sws-qnav-btn', `${j.title ?? j.id}`);
+      btn.type = 'button';
+      btn.style.textAlign = 'left';
+      btn.style.marginLeft = (getDepth(j.id) * 14) + 'px';
+      if(j.id === ctx2.destJournalId) btn.classList.add('sws-qnav-active');
+      btn.onclick = ()=>{
+        ctx2.destJournalId = j.id;
+        renderList();
+        renderPreview();
+      };
+      list.appendChild(btn);
+    }
+  };
+
+  search.addEventListener('input', renderList);
+
+  wrap.appendChild(search);
+  wrap.appendChild(list);
+  treeHost.appendChild(wrap);
+
+  // Ensure selection exists and render immediately
+      if(!ctx2.destJournalId){
+        ctx2.destJournalId = cands[0]?.id ?? null;
+  }
+  renderList();
+}
 
 
     async function renderPreview(){
@@ -1171,7 +904,7 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
 
           const labelKey = toColKeys.find(k=>k) ?? null;
           const colLabels = ensureArray(toSheet?.columns).map(c=>c?.name ?? c?.id ?? '');
-          const targetRecordId = await pickTargetRecordIdFull({ journalId: toId, colKeys: toColKeys, colLabels });
+          const targetRecordId = await pickTargetRecordIdFull({ SettingsWindow, journalId: toId, colKeys: toColKeys, colLabels });
           if(!targetRecordId) return;
 
           const dstDataset = await tableStore.getDataset(toId);
@@ -1246,152 +979,7 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
       return;
     }
 
-    // Fallback to legacy TransferUI modal
-    const TransferUI = global.TransferUI;
-    if(!TransferUI?.openTransfer){
-      UI.toast?.error?.('TransferUI модалка не завантажена') ?? console.error('TransferUI modals not loaded');
-      return;
-    }
-
-    // Step 0: pick scenario + subrows to copy (if any)
-    const pick = await openScenarioAndSubrowsPicker({ srcRecord });
-    if(!pick) return;
-    const scenario = pick.scenario || 'existing';
-    const selectedLineIdxs = ensureArray(pick.selectedLineIdxs).filter(n=>Number.isFinite(n) && n>0);
-    TransferUI.openTransfer({
-      sheets,
-      templates,
-      sourceSheetKey: sourceJournalId,
-      sourceRow: srcRow,
-      onApply: async ({ template, targetRow }) => {
-        const toId = template?.toSheetKey;
-        if(!toId){
-          UI.toast?.error?.('Не вказано цільовий журнал') ?? console.error('No target journal');
-          return;
-        }
-
-        const toSheet = sheets.find(s => s.key === toId) || sheets[0];
-        const toColKeys = ensureArray(toSheet?.columns).map(c => c.id);
-
-        // Validate destination subrows policy: block if ANY column has subrows disabled (as requested)
-        const dstSettings = await loadTableSettingsForJournal(toId);
-        const disabled = [];
-        const enabledMap = dstSettings?.subrows?.columnsSubrowsEnabled ?? {};
-        for(let i=0;i<toColKeys.length;i++){
-          const k = toColKeys[i];
-          if(!k) continue;
-          if(enabledMap[k] === false){
-            const colName = toSheet?.columns?.[i]?.name ?? k;
-            disabled.push(`${i+1}: ${colName}`);
-          }
-        }
-        if(disabled.length){
-          UI.toast?.error?.(`Копіювання неможливе: підстроки вимкнені у колонках ${disabled.join(', ')}`) ?? console.error('Subrows disabled in target columns', disabled);
-          return;
-        }
-
-        // Base row mapping from UI targetRow
-        const recordBase = core.buildRecordFromRow(toColKeys, targetRow);
-
-        // Build mapped lines (line #1 is base row, lines #2.. are subrows)
-        const includeBase = selectedLineIdxs.includes(1);
-        const srcSubrows = ensureArray(srcRecord?.subrows);
-
-        const mappedLines = [];
-        // line 1 (base)
-        if(includeBase){
-          mappedLines.push({ cells: { ...(recordBase?.cells ?? {}) } });
-        }
-
-        // lines 2..N+1 (subrows)
-        for(const lineIdx of selectedLineIdxs){
-          if(lineIdx <= 1) continue;
-          const srcSub = srcSubrows[lineIdx-2]; // line2 -> subrows[0]
-          if(!srcSub) continue;
-          const srcSubRow = rowArrayFromCells(srcSub?.cells ?? {}, fromColKeys);
-          const tgtSubRow = core.applyTemplateToRow(template, srcSubRow, { sourceColKeys: fromColKeys, targetColKeys: toColKeys });
-          const subRec = core.buildRecordFromRow(toColKeys, tgtSubRow);
-          mappedLines.push({ cells: { ...(subRec?.cells ?? {}) } });
-        }
-        if(scenario === 'new'){
-          // Scenario 2: copy into a NEW row in destination
-          const baseCells = includeBase ? (recordBase?.cells ?? {}) : {};
-          const subLines = includeBase ? mappedLines.slice(1) : mappedLines.slice(0);
-          const recordPartial = { ...recordBase, cells: baseCells, subrows: subLines.map(l=>({ cells: { ...(l?.cells ?? {}) } })) };
-          await tableStore.addRecord(toId, recordPartial);
-          UI.toast?.success?.('Копіювання виконано (створено нову строку у цільовому журналі)') ?? console.log('Transfer applied (new row)');
-          return;
-        }
-
-        // Scenario 1: copy into an EXISTING row in destination (select target record)
-        const labelKey = toColKeys.find(k=>k) ?? null;
-        const targetRecordId = await pickTargetRecordId({ journalId: toId, labelColKey: labelKey });
-        if(!targetRecordId) return;
-
-        const dstDataset = await tableStore.getDataset(toId);
-        const dstRecord = ensureArray(dstDataset?.records).find(r=>r?.id === targetRecordId);
-        if(!dstRecord){
-          UI.toast?.warning?.('Цільова строка не знайдена') ?? console.warn('Target record not found');
-          return;
-        }
-
-        // Determine global max filled LINE index (1=base, 2..=subrows) across ALL columns
-        const existingSubrows = ensureArray(dstRecord?.subrows);
-        const totalLines = 1 + existingSubrows.length;
-
-        let globalMaxLine = 0;
-        for(const colKey of toColKeys){
-          if(!colKey) continue;
-          let maxForCol = 0;
-
-          // base line (1)
-          const baseVal = dstRecord?.cells?.[colKey];
-          if(isFilled(baseVal)) maxForCol = 1;
-
-          // subrows lines (2..)
-          for(let i=0;i<existingSubrows.length;i++){
-            const v = existingSubrows[i]?.cells?.[colKey];
-            if(isFilled(v)) maxForCol = Math.max(maxForCol, i+2); // line index
-          }
-
-          if(maxForCol > globalMaxLine) globalMaxLine = maxForCol;
-        }
-
-        const copyLines = mappedLines; // each is {cells}
-        const K = copyLines.length;
-
-        const neededLastLine = globalMaxLine + K;
-        const neededSubrowsLen = Math.max(0, neededLastLine - 1);
-
-        // clone existing subrows
-        const nextSubrows = existingSubrows.map(s=>({ cells: { ...(s?.cells ?? {}) } }));
-        while(nextSubrows.length < neededSubrowsLen) nextSubrows.push({ cells: {} });
-
-        // clone base cells (we patch only if a copied line writes into base)
-        const nextBaseCells = { ...(dstRecord?.cells ?? {}) };
-
-        // Apply copied lines starting at (globalMaxLine + 1)
-        for(let i=0;i<K;i++){
-          const dstLine = globalMaxLine + 1 + i; // 1-based line
-          const patchCells = copyLines[i]?.cells ?? {};
-          if(dstLine <= 1){
-            // write into base
-            for(const k of Object.keys(patchCells)) nextBaseCells[k] = patchCells[k];
-          }else{
-            const si = dstLine - 2; // subrows index
-            const cur = nextSubrows[si] || { cells:{} };
-            nextSubrows[si] = { ...cur, cells: { ...(cur?.cells ?? {}), ...patchCells } };
-          }
-        }
-
-        await tableStore.updateRecord(toId, targetRecordId, {
-          cells: nextBaseCells,
-          subrows: nextSubrows
-        });
-
-        UI.toast?.success?.('Копіювання виконано (оновлено існуючу строку у цільовому журналі)') ?? console.log('Transfer applied (existing row)');
-}
-    });
+    UI.toast?.error?.('Transfer SWS недоступний: потрібен SettingsWindow') ?? console.error('Transfer SWS unavailable');
   }
 
   UI.transfer = { openSettings, openRowModal };

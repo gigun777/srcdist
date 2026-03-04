@@ -784,7 +784,1001 @@ export function createModuleManagerUI({ sdo, mount, api }) {
   // -----------------------------
   // NOTE: implemented as a separate module (single SWS window)
   function openBackupModal() {
-    return openBackupManager({ sdo: (sdo || window.sdo) });
+    const sdoInst = sdo || window.sdo;
+    if (!sdoInst) {
+      window.UI?.toast?.show?.('SDO instance not found (window.sdo)', { type: 'error' });
+      return;
+    }
+
+    const getActiveJournalId = () => {
+      try {
+        return sdoInst.getState?.().activeJournalId || null;
+      } catch {
+        return null;
+      }
+    };
+
+    const getActiveJournalTitle = () => {
+      const st = sdoInst.getState?.() || {};
+      const id = st.activeJournalId;
+      const j = (st.journals || []).find((x) => x && x.id === id) || null;
+      return j?.title || j?.name || (id ? String(id) : '—');
+    };
+
+    // --- minimal ZIP (STORE) helpers ---
+    // Supports: a handful of files, ASCII names.
+    const enc = new TextEncoder();
+    const dec = new TextDecoder();
+
+    const crcTable = (() => {
+      const table = new Uint32Array(256);
+      for (let i = 0; i < 256; i++) {
+        let c = i;
+        for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+        table[i] = c >>> 0;
+      }
+      return table;
+    })();
+    function crc32(u8) {
+      let c = 0xFFFFFFFF;
+      for (let i = 0; i < u8.length; i++) c = crcTable[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+      return (c ^ 0xFFFFFFFF) >>> 0;
+    }
+    function u16(v) { const a = new Uint8Array(2); new DataView(a.buffer).setUint16(0, v, true); return a; }
+    function u32(v) { const a = new Uint8Array(4); new DataView(a.buffer).setUint32(0, v >>> 0, true); return a; }
+
+    function zipStore(files) {
+      // files: [{name, dataU8}]
+      let offset = 0;
+      const localParts = [];
+      const centralParts = [];
+
+      for (const f of files) {
+        const nameU8 = enc.encode(f.name);
+        const dataU8 = f.dataU8;
+        const crc = crc32(dataU8);
+
+        // Local file header
+        const local = [
+          u32(0x04034b50), // sig
+          u16(20), // ver
+          u16(0), // flags
+          u16(0), // method=store
+          u16(0), // mtime
+          u16(0), // mdate
+          u32(crc),
+          u32(dataU8.length),
+          u32(dataU8.length),
+          u16(nameU8.length),
+          u16(0),
+          nameU8,
+          dataU8,
+        ];
+        localParts.push(new Blob(local));
+
+        // Central directory header
+        const central = [
+          u32(0x02014b50),
+          u16(20),
+          u16(20),
+          u16(0),
+          u16(0),
+          u16(0),
+          u16(0),
+          u32(crc),
+          u32(dataU8.length),
+          u32(dataU8.length),
+          u16(nameU8.length),
+          u16(0),
+          u16(0),
+          u16(0),
+          u16(0),
+          u32(0),
+          u32(offset),
+          nameU8,
+        ];
+        centralParts.push(new Blob(central));
+
+        // Update offset by local header+name+data lengths
+        offset += 30 + nameU8.length + dataU8.length;
+      }
+
+      const centralSize = centralParts.reduce((sum, b) => sum + b.size, 0);
+      const centralOffset = offset;
+
+      const end = new Blob([
+        u32(0x06054b50),
+        u16(0),
+        u16(0),
+        u16(files.length),
+        u16(files.length),
+        u32(centralSize),
+        u32(centralOffset),
+        u16(0),
+      ]);
+
+      return new Blob([...localParts, ...centralParts, end], { type: 'application/zip' });
+    }
+
+    async function unzipStoreGetFile(ab, wantedName) {
+      const u8 = new Uint8Array(ab);
+      // Find End of Central Directory signature from end
+      for (let i = u8.length - 22; i >= 0 && i >= u8.length - 66000; i--) {
+        if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) {
+          const dv = new DataView(u8.buffer, u8.byteOffset + i);
+          const cdSize = dv.getUint32(12, true);
+          const cdOff = dv.getUint32(16, true);
+          let p = cdOff;
+          const cdEnd = cdOff + cdSize;
+          while (p + 46 <= cdEnd) {
+            if (u8[p] !== 0x50 || u8[p + 1] !== 0x4b || u8[p + 2] !== 0x01 || u8[p + 3] !== 0x02) break;
+            const dvh = new DataView(u8.buffer, u8.byteOffset + p);
+            const nameLen = dvh.getUint16(28, true);
+            const extraLen = dvh.getUint16(30, true);
+            const commentLen = dvh.getUint16(32, true);
+            const lfhOff = dvh.getUint32(42, true);
+            const name = dec.decode(u8.slice(p + 46, p + 46 + nameLen));
+            if (name === wantedName) {
+              // Read local file header
+              const dvlfh = new DataView(u8.buffer, u8.byteOffset + lfhOff);
+              const lnameLen = dvlfh.getUint16(26, true);
+              const lextraLen = dvlfh.getUint16(28, true);
+              const compMethod = dvlfh.getUint16(8, true);
+              const compSize = dvlfh.getUint32(18, true);
+              const dataStart = lfhOff + 30 + lnameLen + lextraLen;
+              const data = u8.slice(dataStart, dataStart + compSize);
+              if (compMethod !== 0) throw new Error('ZIP: unsupported compression method');
+              return data;
+            }
+            p += 46 + nameLen + extraLen + commentLen;
+          }
+        }
+      }
+      return null;
+    }
+
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+
+    function pickFile({ accept }) {
+      return new Promise((resolve) => {
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.accept = accept || '*/*';
+        input.style.position = 'fixed';
+        input.style.left = '-10000px';
+        input.style.top = '0';
+        input.style.width = '1px';
+        input.style.height = '1px';
+        input.style.opacity = '0';
+        input.style.zIndex = '1000000';
+        document.body.appendChild(input);
+
+        let done = false;
+        const onFocusBack = async () => {
+          setTimeout(() => {
+            const file = (input.files && input.files[0]) ? input.files[0] : null;
+            finish(file);
+          }, 250);
+        };
+
+        const finish = async (file) => {
+          if (done) return;
+          done = true;
+          window.removeEventListener('focus', onFocusBack, true);
+          try { input.remove(); } catch (_) {}
+          resolve(file || null);
+        };
+
+        input.onchange = async () => {
+          const file = (input.files && input.files[0]) ? input.files[0] : null;
+          finish(file);
+        };
+
+        window.addEventListener('focus', onFocusBack, true);
+        input.click();
+      });
+    }
+
+
+    async function forceTableRerender() {
+      if (typeof sdoInst?.commit !== 'function') return;
+      await sdoInst.commit((next) => {
+        next.activeSpaceId = next.activeSpaceId;
+        next.activeJournalId = next.activeJournalId;
+      }, []);
+    }
+
+    
+
+function openImportDebugModal({ title, steps, rawErrors, meta }) {
+  const UI = window.UI;
+  if (!UI?.modal?.open) return;
+
+  const wrap = document.createElement('div');
+  wrap.className = 'sdo-import-debug';
+  wrap.style.maxWidth = '720px';
+  wrap.style.fontSize = '14px';
+  wrap.style.lineHeight = '1.35';
+
+  const h3 = document.createElement('h3');
+  h3.textContent = title || 'Import debug';
+  h3.style.margin = '0 0 10px 0';
+
+  const ul = document.createElement('ul');
+  ul.style.margin = '0 0 10px 18px';
+  ul.style.padding = '0';
+
+  (steps || []).forEach((s) => {
+    const li = document.createElement('li');
+    li.textContent = `${s.ok ? '✅' : '❌'} ${s.stage}${s.msg ? `: ${s.msg}` : ''}`;
+    ul.appendChild(li);
+  });
+
+  const details = document.createElement('details');
+  details.style.marginTop = '8px';
+  const summary = document.createElement('summary');
+  summary.textContent = 'Деталі (errors/meta)';
+  summary.style.cursor = 'pointer';
+
+  const pre = document.createElement('pre');
+  pre.style.whiteSpace = 'pre-wrap';
+  pre.style.wordBreak = 'break-word';
+  pre.style.background = '#1111';
+  pre.style.padding = '8px';
+  pre.style.borderRadius = '8px';
+  pre.textContent = JSON.stringify({ rawErrors, meta }, null, 2);
+
+  details.appendChild(summary);
+  details.appendChild(pre);
+
+  wrap.appendChild(h3);
+  wrap.appendChild(ul);
+  wrap.appendChild(details);
+
+  UI.modal.open({ title: 'JSON Import', contentNode: wrap, closeOnOverlay: true });
+}
+
+async function exportCurrentJournalJson() {
+      const id = getActiveJournalId();
+      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
+      const bundle = await sdoInst.api.tableStore.exportTableData({ journalIds: [id], includeFormatting: true });
+      const json = JSON.stringify(bundle, null, 2);
+      const fname = `journal_${getActiveJournalTitle()}_${new Date().toISOString().replace(/[:\.]/g, '-')}.json`;
+      downloadBlob(new Blob([json], { type: 'application/json' }), fname);
+      window.UI?.toast?.show?.('Експорт JSON виконано', { type: 'success' });
+    }
+
+    
+async function importCurrentJournalJson() {
+  const steps = [];
+  try {
+    const id = getActiveJournalId();
+    if (!id) {
+      steps.push({ stage: 'getActiveJournalId', ok: false, msg: 'activeJournalId пустий' });
+      openImportDebugModal({ title: 'Імпорт JSON (таблиця)', steps });
+      return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
+    }
+    steps.push({ stage: 'getActiveJournalId', ok: true, msg: id });
+
+    const file = await pickFile({ accept: 'application/json,.json' });
+    if (!file) {
+      steps.push({ stage: 'pickFile', ok: false, msg: 'Файл не обрано' });
+      openImportDebugModal({ title: 'Імпорт JSON (таблиця)', steps });
+      return;
+    }
+    steps.push({ stage: 'pickFile', ok: true, msg: file.name });
+
+    const text = await file.text();
+    steps.push({ stage: 'readFile', ok: true, msg: `${text.length} bytes` });
+
+    let parsed;
+    try {
+      parsed = JSON.parse(text);
+      steps.push({ stage: 'JSON.parse', ok: true });
+    } catch (_) {
+      steps.push({ stage: 'JSON.parse', ok: false, msg: 'JSON пошкоджений' });
+      openImportDebugModal({ title: 'Імпорт JSON (таблиця)', steps, meta: { file: file.name } });
+      return window.UI?.toast?.show?.('JSON пошкоджений', { type: 'error' });
+    }
+
+    // Force import into active journal: take the first dataset.
+    const ds0 = parsed?.datasets?.[0] || null;
+    const normalized = (parsed?.format === 'sdo-table-data') ? parsed : null;
+    let bundle = normalized;
+    if (!bundle && ds0) {
+      bundle = { format: 'sdo-table-data', formatVersion: 1, exportedAt: new Date().toISOString(), datasets: [ds0] };
+    }
+
+    if (!bundle || !Array.isArray(bundle.datasets) || bundle.datasets.length === 0) {
+      steps.push({ stage: 'normalize', ok: false, msg: 'Невідомий формат JSON для таблиці' });
+      openImportDebugModal({
+        title: 'Імпорт JSON (таблиця)',
+        steps,
+        meta: { detectedFormat: parsed?.format, hasDatasets: Array.isArray(parsed?.datasets), file: file.name }
+      });
+      window.UI?.toast?.show?.('Невідомий формат JSON для таблиці', { type: 'error' });
+      return;
+    }
+    steps.push({ stage: 'normalize', ok: true, msg: `datasets=${bundle.datasets.length}` });
+
+    // Rewrite journalId
+    bundle.datasets = bundle.datasets.map((d) => ({ ...d, journalId: id }));
+    steps.push({ stage: 'rewriteJournalId', ok: true });
+
+    let mode = 'replace';
+    if (typeof window.UI?.confirm === 'function') {
+      const okReplace = await window.UI.confirm(
+        'Імпорт JSON',
+        'Режим: ОК = replace (повністю замінити), Скасувати = merge (додати/оновити).',
+        { okText: 'Replace', cancelText: 'Merge' }
+      );
+      mode = okReplace ? 'replace' : 'merge';
+    }
+    steps.push({ stage: 'chooseMode', ok: true, msg: mode });
+
+    const res = await sdoInst.api.tableStore.importTableData(bundle, { mode });
+
+    if (res?.applied) {
+      steps.push({ stage: 'importTableData', ok: true, msg: `datasets=${Array.isArray(res?.datasets) ? res.datasets.length : 0}` });
+      await forceTableRerender();
+      steps.push({ stage: 'rerender', ok: true });
+
+      openImportDebugModal({ title: 'Імпорт JSON (таблиця) — OK', steps, meta: { mode, file: file.name } });
+
+      const count = Array.isArray(res?.datasets) ? res.datasets.length : 0;
+      window.UI?.toast?.show?.(`Імпорт JSON виконано (${mode})${count ? `, datasets: ${count}` : ''}`, { type: 'success' });
+      return;
+    }
+
+    steps.push({ stage: 'importTableData', ok: false, msg: (res?.errors || []).join(', ') || 'applied=false' });
+    openImportDebugModal({ title: 'Імпорт JSON (таблиця)', steps, rawErrors: res?.errors, meta: { mode, file: file.name } });
+    window.UI?.toast?.show?.(`Імпорт JSON не виконано: ${(res?.errors || []).join(', ')}`, { type: 'error' });
+  } catch (e) {
+    const msg = (e?.message || String(e));
+    steps.push({ stage: 'exception', ok: false, msg });
+    openImportDebugModal({ title: 'Імпорт JSON (таблиця) — CRASH', steps });
+    window.UI?.toast?.show?.('JSON імпорт помилка: ' + msg, { type: 'error' });
+  }
+}
+
+    async function exportCurrentJournalXlsx() {
+      const id = getActiveJournalId();
+      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
+      await sdoInst.exportXlsx({ journalIds: [id], filename: `journal_${getActiveJournalTitle()}` });
+      window.UI?.toast?.show?.('Експорт XLSX виконано', { type: 'success' });
+    }
+
+    async function importCurrentJournalXlsx() {
+      const id = getActiveJournalId();
+      if (!id) return window.UI?.toast?.show?.('Не обрано журнал (activeJournalId пустий)', { type: 'warning' });
+      const file = await pickFile({ accept: '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      if (!file) return;
+
+      let res;
+      try {
+        // Import into current journal regardless of sheet names.
+        res = await sdoInst.importXlsx(file, { mode: 'merge', targetJournalId: id });
+      } catch (e) {
+        window.UI?.toast?.show?.('XLSX імпорт помилка: ' + (e?.message || e), { type: 'error' });
+        return;
+      }
+
+      await forceTableRerender();
+      const cnt = (res?.sheets || []).reduce((a, x) => a + (x?.imported || 0), 0);
+      window.UI?.toast?.show?.('Імпорт XLSX виконано' + (cnt ? (', рядків: ' + cnt) : ''), { type: 'success' });
+    }
+
+        // --- ZIP v2 backup: manifest + per-journal json files ---
+    function safeTs(ts = new Date()) {
+      return new Date(ts).toISOString().replace(/[:\.]/g, '-');
+    }
+
+    function computeDatasetStatsForBackup(dataset) {
+      const records = Array.isArray(dataset?.records) ? dataset.records : [];
+      const rowsCount = records.length;
+
+      let rowsWithSubrows = 0;
+      const dist = {};
+      const colSet = new Set();
+
+      for (const r of records) {
+        const cells = (r && typeof r.cells === 'object' && r.cells) ? r.cells : {};
+        for (const k of Object.keys(cells)) colSet.add(String(k));
+
+        const sub = Array.isArray(r?.subrows) ? r.subrows : [];
+        const n = sub.length;
+        dist[String(n)] = (dist[String(n)] || 0) + 1;
+        if (n > 0) rowsWithSubrows += 1;
+
+        for (const s of sub) {
+          const sc = (s && typeof s.cells === 'object' && s.cells) ? s.cells : {};
+          for (const k of Object.keys(sc)) colSet.add(String(k));
+        }
+      }
+
+      return {
+        columnsCount: colSet.size,
+        rowsCount,
+        rowsWithSubrows,
+        subrowsDistribution: dist
+      };
+    }
+
+    function buildJournalPathMap({ spaces, journals }) {
+      const spaceById = new Map((spaces || []).map((s) => [s.id, s]));
+      const journalById = new Map((journals || []).map((j) => [j.id, j]));
+
+      const memo = new Map();
+      function compute(jId) {
+        if (memo.has(jId)) return memo.get(jId);
+        const j = journalById.get(jId);
+        if (!j) return null;
+        const parentId = j.parentId;
+
+        const idx = (j.index != null && String(j.index).trim() !== '') ? String(j.index).trim() : (j.title || j.name || 'X');
+        // Root journal: parent is spaceId
+        if (spaceById.has(parentId)) {
+          memo.set(jId, idx);
+          return idx;
+        }
+        // Nested journal
+        const p = compute(parentId);
+        const out = p ? `${p}.${idx}` : idx;
+        memo.set(jId, out);
+        return out;
+      }
+
+      const out = {};
+      for (const j of journals || []) {
+        if (!j?.id) continue;
+        out[j.id] = compute(j.id) || (j.index ? String(j.index) : String(j.id));
+      }
+      return out;
+    }
+
+    async function exportAllZip() {
+      const createdAt = new Date().toISOString();
+      const ts = safeTs(createdAt);
+
+      // Export full backup bundle from core (single source of truth) and split to files.
+      const bundle = await sdoInst.exportBackup({ scope: 'all', includeUserData: true });
+
+      // NOTE: bundle.core.navigation is a NAV PAYLOAD (spaces_nodes_v2/journals_nodes_v2), not the in-memory nav state.
+      // For export we must use the actual runtime state (single source of truth) to enumerate spaces/journals.
+      // Otherwise we export only structure (navigation payload) but miss journal datasets.
+      const navPayload = bundle?.core?.navigation || null;
+      const st0 = (sdoInst?.api?.getState && typeof sdoInst.api.getState === 'function') ? sdoInst.api.getState() : {};
+      const spaces = Array.isArray(st0.spaces) ? st0.spaces : [];
+      const journals = Array.isArray(st0.journals) ? st0.journals : [];
+
+      // --- Path helpers for ZIP v2 journal files (human readable, stable) ---
+      // IMPORTANT: numbering is computed from the tree order (like Transfer tree), not parsed from titles.
+      const spaceById = new Map(spaces.map((s) => [s.id, s]));
+      const journalById = new Map(journals.map((j) => [j.id, j]));
+
+      function translitUaToLat(s) {
+        const map = {
+          'а':'a','б':'b','в':'v','г':'h','ґ':'g','д':'d','е':'e','є':'ie','ж':'zh','з':'z','и':'y','і':'i','ї':'i','й':'i',
+          'к':'k','л':'l','м':'m','н':'n','о':'o','п':'p','р':'r','с':'s','т':'t','у':'u','ф':'f','х':'kh','ц':'ts','ч':'ch','ш':'sh','щ':'shch','ю':'iu','я':'ia',
+          'ь':'','ʼ':'','’':'','`':'','"':'',"\'":'',
+        };
+        return String(s ?? '').toLowerCase().split('').map((ch) => map.hasOwnProperty(ch) ? map[ch] : ch).join('');
+      }
+
+      function slugUa(s) {
+        const t = translitUaToLat(String(s ?? ''));
+        return t.replace(/[^a-z0-9]+/g, '').trim();
+      }
+
+      const buildSpaceSnapshotForExport = (spacesList) => {
+        const nodes = {};
+        const rootIds = [];
+        const list = Array.isArray(spacesList) ? spacesList.filter(Boolean) : [];
+        const meta = {};
+        for (const sp of list) {
+          nodes[sp.id] = { id: sp.id, title: sp.title || sp.name || sp.id, parentId: sp.parentId || null, children: [] };
+          meta[sp.id] = { createdAt: sp.createdAt || null, title: String(sp.title || sp.name || sp.id || '') };
+        }
+        for (const sp of list) {
+          const pid = sp.parentId || null;
+          if (pid && nodes[pid]) nodes[pid].children.push(sp.id);
+          else rootIds.push(sp.id);
+        }
+        // Stable numbering: order spaces by createdAt (ascending). Fallback to title.
+        const sortIds = (ids) => ids.sort((a, b) => {
+          const A = meta[a] || { createdAt: null, title: '' };
+          const B = meta[b] || { createdAt: null, title: '' };
+          const ca = A.createdAt ? Date.parse(A.createdAt) : NaN;
+          const cb = B.createdAt ? Date.parse(B.createdAt) : NaN;
+          const ha = Number.isFinite(ca);
+          const hb = Number.isFinite(cb);
+          if (ha && hb && ca !== cb) return ca - cb;
+          if (ha && !hb) return -1;
+          if (!ha && hb) return 1;
+          return String(A.title).localeCompare(String(B.title));
+        });
+        sortIds(rootIds);
+        for (const id of Object.keys(nodes)) sortIds(nodes[id].children);
+        return { nodes, rootIds };
+      };
+
+      const buildJournalSnapshotForSpace = (spaceId) => {
+        const nodes = {};
+        const topIds = [];
+        const list = Array.isArray(journals)
+          ? journals.filter((j) => j && j.spaceId === spaceId)
+          : [];
+        const meta = {};
+        for (const j of list) {
+          meta[j.id] = { idx: typeof j.index === 'number' ? j.index : 1e9, title: String(j.title || j.name || '') };
+          nodes[j.id] = { id: j.id, title: j.title || j.name || j.id, parentId: j.parentId || null, children: [] };
+        }
+        for (const j of list) {
+          const pid = j.parentId || spaceId;
+          if (nodes[pid]) nodes[pid].children.push(j.id);
+          else topIds.push(j.id);
+        }
+        const sortIds = (ids) => {
+          ids.sort((a, b) => {
+            const A = meta[a] || { idx: 1e9, title: '' };
+            const B = meta[b] || { idx: 1e9, title: '' };
+            if (A.idx !== B.idx) return A.idx - B.idx;
+            return A.title.localeCompare(B.title);
+          });
+        };
+        sortIds(topIds);
+        for (const id of Object.keys(nodes)) sortIds(nodes[id].children);
+        return { nodes, topIds };
+      };
+
+      const sSnapExp = buildSpaceSnapshotForExport(spaces);
+      const spaceNums = computeTreeNumbering(sSnapExp.rootIds, (id) => sSnapExp.nodes[id]?.children || []);
+      const journalNums = new Map();
+      for (const sp of spaces) {
+        if (!sp?.id) continue;
+        const jSnap = buildJournalSnapshotForSpace(sp.id);
+        const jMap = computeTreeNumbering(jSnap.topIds, (id) => jSnap.nodes[id]?.children || []);
+        for (const [jid, num] of jMap.entries()) journalNums.set(jid, num);
+      }
+
+      function findSpaceForJournal(journal) {
+        if (!journal) return null;
+        let pid = journal.parentId;
+        // Walk up journal parents until parentId is a space id.
+        while (pid && !spaceById.has(pid)) {
+          const pj = journalById.get(pid);
+          if (!pj) break;
+          pid = pj.parentId;
+        }
+        return pid && spaceById.has(pid) ? spaceById.get(pid) : null;
+      }
+
+      // Templates / settings payloads
+      const journalTemplates = bundle?.modules?.['journal-templates']?.data?.templates || [];
+      const transferTemplates = bundle?.modules?.['transfer-templates']?.data?.templates || [];
+      const tableSettings = bundle?.modules?.['table-settings']?.data?.settings || {};
+      const coreSettings = bundle?.core?.settings?.coreSettings || {};
+      const tableData = bundle?.modules?.['table-datasets']?.data || { format: 'sdo-table-data', formatVersion: 1, datasets: [] };
+
+      const tplById = new Map(journalTemplates.map((t) => [t.id, t]));
+      const pathByJournalId = buildJournalPathMap({ spaces, journals });
+      const tableStore = sdoInst?.api?.tableStore || null;
+
+      // Build per-journal files
+      const journalFiles = [];
+      const datasetByJournalId = new Map((tableData?.datasets || []).map((d) => [d.journalId, d]));
+
+      for (const j of journals) {
+        const space = findSpaceForJournal(j);
+        const sNum = (space && spaceNums.get(space.id)) ? spaceNums.get(space.id) : '0';
+        const jNum = journalNums.get(j.id) || '0';
+        const pathStr = `s${sNum}${slugUa(space?.title || space?.name || '')}/j${jNum}${slugUa(j.title || j.name || '')}`;
+        if (!j?.id) continue;
+        // Prefer single-source-of-truth: read dataset directly from tableStore for each journal.
+        // This avoids relying on tableStore:index (which may be incomplete in some edge cases).
+        let ds = null;
+        if (tableStore && typeof tableStore.getDataset === 'function') {
+          try { ds = await tableStore.getDataset(j.id); } catch { ds = null; }
+        }
+        if (!ds) ds = datasetByJournalId.get(j.id) || { journalId: j.id, records: [], meta: {} };
+        const st = computeDatasetStatsForBackup(ds);
+
+        const tpl = tplById.get(j.templateId) || null;
+        const templateName = tpl?.title || tpl?.name || tpl?.id || j.templateId || null;
+
+        const TABLE_SETTINGS_KEY = '@sdo/module-table-renderer:settings';
+        const perJournalSettings = tableSettings?.[`${TABLE_SETTINGS_KEY}:${j.id}`] ?? null;
+
+        const payload = {
+          format: 'sdo-journal',
+          version: 2,
+          createdAt,
+          meta: {
+            journalId: j.id,
+            spaceId: j.spaceId,
+            parentId: j.parentId,
+            title: j.title || j.name || null,
+            index: j.index ?? null,
+            path: pathStr,
+            templateId: j.templateId || null,
+            templateName,
+            columnsCount: st.columnsCount,
+            rowsCount: st.rowsCount,
+            rowsWithSubrows: st.rowsWithSubrows,
+            subrowsDistribution: st.subrowsDistribution,
+            exportedAt: createdAt,
+            // path is already set above
+          },
+          settings: {
+            tableRenderer: perJournalSettings
+          },
+          data: {
+            dataset: ds
+          }
+        };
+
+        const name = `journals/journal_${j.id}_${ts}.json`;
+        journalFiles.push({ name, dataU8: enc.encode(JSON.stringify(payload, null, 2)) });
+      }
+
+      // Top-level files
+      const files = [];
+
+      // Manifest
+      const manifest = {
+        format: 'sdo-backup-zip',
+        version: 2,
+        createdAt,
+        app: bundle?.app || { name: '@sdo/core', version: 'unknown' },
+        mode: 'full',
+        contains: {
+          journals: true,
+          journalTemplates: true,
+          transferTemplates: true,
+          columnTypes: true,
+          settings: true,
+          navigation: true
+        },
+        files: {
+          manifest: 'manifest.json',
+          navigation: 'spaces/navigation.json',
+          journalTemplates: 'templates/journal_templates.json',
+          transferTemplates: 'templates/transfer_templates.json',
+          columnTypes: 'templates/column_types.json',
+          globalSettings: 'settings/global_settings.json',
+          journals: journalFiles.map((f) => f.name)
+        },
+        order: [
+          'journalTemplates',
+          'transferTemplates',
+          'columnTypes',
+          'settings',
+          'navigation',
+          'journalsData'
+        ]
+      };
+
+      files.push({ name: 'manifest.json', dataU8: enc.encode(JSON.stringify(manifest, null, 2)) });
+
+      // Navigation
+      files.push({
+        name: 'spaces/navigation.json',
+        dataU8: enc.encode(JSON.stringify({ format: 'sdo-navigation', version: 1, createdAt, navigation: nav }, null, 2))
+      });
+
+      // Templates
+      files.push({
+        name: 'templates/journal_templates.json',
+        dataU8: enc.encode(JSON.stringify({ format: 'sdo-journal-templates', version: 1, createdAt, templates: journalTemplates }, null, 2))
+      });
+      files.push({
+        name: 'templates/transfer_templates.json',
+        dataU8: enc.encode(JSON.stringify({ format: 'sdo-transfer-templates', version: 1, createdAt, templates: transferTemplates }, null, 2))
+      });
+
+      // Column types (placeholder for now)
+      files.push({
+        name: 'templates/column_types.json',
+        dataU8: enc.encode(JSON.stringify({ format: 'sdo-column-types', version: 1, createdAt, columnTypes: [] }, null, 2))
+      });
+
+      // Global settings
+      files.push({
+        name: 'settings/global_settings.json',
+        dataU8: enc.encode(JSON.stringify({
+          format: 'sdo-settings',
+          version: 1,
+          createdAt,
+          coreSettings,
+          tableSettings
+        }, null, 2))
+      });
+
+      files.push(...journalFiles);
+
+      const zipBlob = zipStore(files);
+      const fname = `backup_all_${ts}.zip`;
+      downloadBlob(zipBlob, fname);
+      window.UI?.toast?.show?.('Експорт ZIP (v2) виконано', { type: 'success' });
+    }
+
+    async function unzipStoreIndex(ab) {
+      const u8 = new Uint8Array(ab);
+      const names = [];
+      // Find End of Central Directory signature from end
+      for (let i = u8.length - 22; i >= 0 && i >= u8.length - 66000; i--) {
+        if (u8[i] === 0x50 && u8[i + 1] === 0x4b && u8[i + 2] === 0x05 && u8[i + 3] === 0x06) {
+          const dv = new DataView(u8.buffer, u8.byteOffset + i);
+          const cdSize = dv.getUint32(12, true);
+          const cdOff = dv.getUint32(16, true);
+          let p = cdOff;
+          const cdEnd = cdOff + cdSize;
+          while (p + 46 <= cdEnd) {
+            if (u8[p] !== 0x50 || u8[p + 1] !== 0x4b || u8[p + 2] !== 0x01 || u8[p + 3] !== 0x02) break;
+            const dvh = new DataView(u8.buffer, u8.byteOffset + p);
+            const nameLen = dvh.getUint16(28, true);
+            const extraLen = dvh.getUint16(30, true);
+            const commentLen = dvh.getUint16(32, true);
+            const name = dec.decode(u8.slice(p + 46, p + 46 + nameLen));
+            names.push(name);
+            p += 46 + nameLen + extraLen + commentLen;
+          }
+          return names;
+        }
+      }
+      return names;
+    }
+
+    async function importAllZip() {
+      const file = await pickFile({ accept: '.zip,application/zip' });
+      if (!file) return;
+      const ab = await file.arrayBuffer();
+
+      // Require manifest for now (future: allow partial batch import)
+      const manifestU8 = await unzipStoreGetFile(ab, 'manifest.json');
+      if (!manifestU8) {
+        window.UI?.toast?.show?.('У ZIP відсутній manifest.json. Поки що імпорт без manifest не підтримується.', { type: 'error' });
+        return;
+      }
+
+      let manifest;
+      try { manifest = JSON.parse(dec.decode(manifestU8)); } catch {
+        window.UI?.toast?.show?.('manifest.json пошкоджений', { type: 'error' });
+        return;
+      }
+      if (manifest?.format !== 'sdo-backup-zip' || manifest?.version !== 2) {
+        window.UI?.toast?.show?.('Непідтримуваний формат manifest.json', { type: 'error' });
+        return;
+      }
+
+      // Import mode: replace must clear all storage
+      const okReplace = await window.UI?.confirm?.('Імпорт ZIP', 'Режим: ОК = replace (очистити все і відновити), Скасувати = merge (об’єднати).', { okText: 'Replace', cancelText: 'Merge' });
+      const mode = okReplace ? 'replace' : 'merge';
+
+      // Step 0: clear storage on replace
+      if (mode === 'replace') {
+        try {
+          const items = (await sdoInst.api?.storage?.list?.('')) || [];
+          for (const it of items) {
+            if (it?.key) await sdoInst.api.storage.del(it.key);
+          }
+        } catch (e) {
+          window.UI?.toast?.show?.('Не вдалося очистити сховище: ' + (e?.message || e), { type: 'error' });
+          return;
+        }
+      }
+
+      // Read required files
+      const f = manifest.files || {};
+      const navPath = f.navigation || 'spaces/navigation.json';
+      const jtPath = f.journalTemplates || 'templates/journal_templates.json';
+      const ttPath = f.transferTemplates || 'templates/transfer_templates.json';
+      const gsPath = f.globalSettings || 'settings/global_settings.json';
+      const journalPaths = Array.isArray(f.journals) ? f.journals : [];
+
+      const getJson = async (path) => {
+        const u8 = await unzipStoreGetFile(ab, path);
+        if (!u8) throw new Error(`ZIP: missing file ${path}`);
+        return JSON.parse(dec.decode(u8));
+      };
+
+      let navJson, jtJson, ttJson, gsJson;
+      try {
+        navJson = await getJson(navPath);
+        jtJson = await getJson(jtPath);
+        ttJson = await getJson(ttPath);
+        gsJson = await getJson(gsPath);
+      } catch (e) {
+        window.UI?.toast?.show?.('ZIP імпорт помилка: ' + (e?.message || e), { type: 'error' });
+        return;
+      }
+
+      // Build classic backup bundle and import via core (single source of truth)
+      const backupBundle = {
+        format: 'sdo-backup',
+        formatVersion: 1,
+        backupId: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+        app: manifest.app || { name: '@sdo/core', version: 'unknown' },
+        scope: 'all',
+        core: {
+          navigation: navJson?.navigation || navJson?.core?.navigation || navJson?.payload || navJson?.navigation,
+          settings: { coreSettings: gsJson?.coreSettings || {} }
+        },
+        modules: {},
+        userData: {},
+        integrity: null
+      };
+
+      backupBundle.modules['journal-templates'] = { moduleVersion: '0.1.0', data: { templates: jtJson?.templates || [] } };
+      backupBundle.modules['transfer-templates'] = { moduleVersion: '1.0.0', data: { templates: ttJson?.templates || [] } };
+      backupBundle.modules['table-settings'] = { moduleVersion: '1.0.0', data: { settings: gsJson?.tableSettings || {} } };
+
+      // Journals: read each file, validate minimal fields, gather datasets
+      const datasets = [];
+      const existingTemplates = new Set((jtJson?.templates || []).map((t) => t?.id).filter(Boolean));
+
+      for (const p of journalPaths) {
+        let jdoc;
+        try { jdoc = await getJson(p); } catch (e) {
+          window.UI?.toast?.show?.('Помилка читання journal: ' + p, { type: 'error' });
+          return;
+        }
+        const meta = jdoc?.meta || {};
+        const ds = jdoc?.data?.dataset || null;
+        if (!ds?.journalId) continue;
+
+        // Minimal validation
+        const cols = Number(meta.columnsCount ?? 0);
+        const rows = Number(meta.rowsCount ?? 0);
+
+        if (!cols && !rows && Array.isArray(ds.records)) {
+          const st = computeDatasetStatsForBackup(ds);
+          meta.columnsCount = st.columnsCount;
+          meta.rowsCount = st.rowsCount;
+        }
+
+        // Template validation: allow create with confirmation
+        const tplId = meta.templateId || null;
+        if (tplId && !existingTemplates.has(tplId)) {
+          const okCreate = await window.UI?.confirm?.('Імпорт ZIP', `Відсутній шаблон журналу "${tplId}". Створити?`, { okText: 'Створити', cancelText: 'Скасувати' });
+          if (!okCreate) {
+            window.UI?.toast?.show?.(`Імпорт скасовано: відсутній шаблон ${tplId}`, { type: 'error' });
+            return;
+          }
+          // Create minimal placeholder template
+          (jtJson.templates = jtJson.templates || []).push({ id: tplId, title: meta.templateName || tplId, columns: [] });
+          existingTemplates.add(tplId);
+          backupBundle.modules['journal-templates'].data.templates = jtJson.templates;
+        }
+
+        // Columns mismatch: allow with confirmation
+        const tpl = (jtJson?.templates || []).find((t) => t?.id === tplId) || null;
+        const tplCols = Array.isArray(tpl?.columns) ? tpl.columns.length : null;
+        if (tplCols != null && cols && tplCols !== cols) {
+          const okContinue = await window.UI?.confirm?.('Імпорт ZIP', `Різна кількість колонок для шаблону "${tplId}": у файлі ${cols}, у шаблоні ${tplCols}. Продовжити?`, { okText: 'Так', cancelText: 'Ні' });
+          if (!okContinue) {
+            window.UI?.toast?.show?.('Імпорт скасовано через розбіжність колонок', { type: 'error' });
+            return;
+          }
+        }
+
+        datasets.push(ds);
+      }
+
+      backupBundle.modules['table-datasets'] = { moduleVersion: '1.0.0', data: { format: 'sdo-table-data', formatVersion: 1, exportedAt: new Date().toISOString(), datasets } };
+
+      try {
+        await sdoInst.importBackup(backupBundle, { mode, includeUserData: true });
+        // Ensure table datasets are applied even if backup provider path changes.
+        // Single source of truth: apply datasets through tableStore API.
+        try {
+          if (Array.isArray(datasets) && datasets.length && sdoInst?.api?.tableStore?.importTableData) {
+            await sdoInst.api.tableStore.importTableData({ format: 'sdo-table-data', formatVersion: 1, datasets }, { mode });
+          }
+        } catch (e2) {
+          console.warn('[ZIP v2] table datasets apply failed', e2);
+        }
+
+        window.UI?.toast?.show?.(`Імпорт ZIP (v2) виконано (${mode})`, { type: 'success' });
+      } catch (e) {
+        window.UI?.toast?.show?.(`Імпорт ZIP помилка: ${e.message || e}`, { type: 'error' });
+      }
+    }
+
+    const body = document.createElement('div');
+    body.className = 'ui-modal-content';
+
+    const title = document.createElement('div');
+    title.style.marginBottom = '8px';
+    title.innerHTML = `<b>Backup / Import / Export</b><div style="opacity:.8;font-size:.9em">Поточний журнал: ${getActiveJournalTitle()}</div>`;
+
+    const grid = document.createElement('div');
+    grid.style.display = 'grid';
+    grid.style.gridTemplateColumns = '1fr 1fr';
+    grid.style.gap = '8px';
+
+    const mkBtn = (label, fn, primary=false) => {
+      const b = document.createElement('button');
+      b.className = primary ? 'btn btn-primary' : 'btn';
+      b.textContent = label;
+      b.onclick = async () => {
+        b.disabled = true;
+        try {
+          await fn();
+        } catch (e) {
+          console.error('[Backup modal action failed]', label, e);
+          const msg = (e && (e.message || e.toString)) ? (e.message || String(e)) : String(e);
+          window.UI?.toast?.show?.(`${label}: помилка: ${msg}`, { type: 'error' });
+          try { window.UI?.modal?.alert?.(`${label}:\n${msg}`, { title: 'Помилка' }); } catch (_) {}
+        } finally {
+          b.disabled = false;
+        }
+      };
+      return b;
+    };
+
+    grid.append(
+      mkBtn('Імпорт JSON (поточний)', importCurrentJournalJson, true),
+      mkBtn('Експорт JSON (поточний)', exportCurrentJournalJson),
+      mkBtn('Імпорт Excel (поточний)', importCurrentJournalXlsx, true),
+      mkBtn('Експорт Excel (поточний)', exportCurrentJournalXlsx)
+    );
+
+    const hr = document.createElement('div');
+    hr.style.height = '1px';
+    hr.style.background = 'rgba(0,0,0,0.08)';
+    hr.style.margin = '12px 0';
+
+    const zipRow = document.createElement('div');
+    zipRow.style.display = 'grid';
+    zipRow.style.gridTemplateColumns = '1fr 1fr';
+    zipRow.style.gap = '8px';
+    zipRow.append(
+      mkBtn('Імпорт всього ZIP', importAllZip, true),
+      mkBtn('Експорт всього ZIP', exportAllZip)
+    );
+
+    body.append(title, grid, hr, zipRow);
+
+    const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+    const legacyPayload = {
+      title: 'Backup',
+      contentNode: body,
+      closeOnOverlay: true,
+    };
+
+    if (adapter && typeof adapter.open === 'function') {
+      const adapterResult = adapter.open({
+        screenId: 'backup.manager',
+        swsOpen: () => {
+          const SW = window.SettingsWindow;
+          if (!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function') {
+            throw new Error('Backup SWS dependencies are unavailable');
+          }
+          SW.openCustomRoot(() => SW.push({
+            title: 'Backup',
+            subtitle: `Поточний журнал: ${getActiveJournalTitle()}`,
+            content: body,
+            saveLabel: 'OK',
+            canSave: () => false,
+          }));
+        },
+        legacy: legacyPayload,
+      });
+      if (adapterResult?.ok) return;
+    }
+
+    window.UI?.modal?.open?.(legacyPayload);
   }
 
 
