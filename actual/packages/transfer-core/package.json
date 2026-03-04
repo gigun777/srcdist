@@ -2,6 +2,9 @@
   "name": "@sedo/transfer-core",
   "version": "0.1.0",
   "type": "module",
+  "scripts": {
+    "smoke": "node ./test_smoke.js"
+  },
   "exports": {
     ".": "./src/index.js"
   }

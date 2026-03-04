@@ -788,7 +788,6 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
   renderList();
 }
 
-
     async function renderPreview(){
       previewHost.innerHTML = '';
       const template = getTemplateById(ctx2.templateId);
