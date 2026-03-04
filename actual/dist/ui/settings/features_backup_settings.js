@@ -17,6 +17,93 @@
     setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
+  function safeParse(input) {
+    try {
+      return typeof input === 'string' ? JSON.parse(input) : input;
+    } catch {
+      return null;
+    }
+  }
+
+  function buildSummaryRows(parsed, ok) {
+    const sectionKeys = Object.keys(parsed?.sections || {});
+    return [
+      ['Статус', ok ? 'Імпорт успішний' : 'Імпорт не виконано'],
+      ['Версія', String(parsed?.version || 'unknown')],
+      ['Секції', sectionKeys.length ? sectionKeys.join(', ') : '—'],
+      ['Створено', parsed?.createdAt || '—']
+    ];
+  }
+
+
+
+  function openViaAdapterOrLegacy(payload) {
+    const adapter = UI?.swsAdapter ?? global?.SWSAdapter ?? null;
+    const legacy = {
+      title: 'Backup Import',
+      contentNode: payload,
+      closeOnOverlay: true
+    };
+
+    if (adapter && typeof adapter.open === 'function') {
+      const out = adapter.open({
+        screenId: 'backup.import',
+        sws: {
+          title: 'Backup Import',
+          content: payload
+        },
+        legacy
+      });
+      if (out?.ok) return out;
+    }
+
+    if (UI?.modal?.open) return UI.modal.open(legacy);
+    return null;
+  }
+
+  function openImportResultModal({ fileName, parsed, ok }) {
+    if (typeof document === 'undefined') return;
+
+    const content = document.createElement('div');
+    content.className = 'ui-modal-content sdo-backup-import-modal';
+
+    const title = document.createElement('h3');
+    title.className = 'sdo-backup-import-title';
+    title.textContent = 'Результат імпорту backup';
+
+    const fileInfo = document.createElement('div');
+    fileInfo.className = 'sdo-backup-import-file';
+    fileInfo.textContent = `Файл: ${fileName || 'unknown.json'}`;
+
+    const table = document.createElement('table');
+    table.className = 'sdo-backup-import-table';
+    const tbody = document.createElement('tbody');
+    for (const [label, value] of buildSummaryRows(parsed, ok)) {
+      const tr = document.createElement('tr');
+      const tdLabel = document.createElement('td');
+      const tdValue = document.createElement('td');
+      tdLabel.textContent = label;
+      tdValue.textContent = value;
+      tr.append(tdLabel, tdValue);
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+
+    const jsonDetails = document.createElement('details');
+    jsonDetails.className = 'sdo-backup-import-json';
+
+    const summary = document.createElement('summary');
+    summary.textContent = 'Показати JSON (debug)';
+
+    const pre = document.createElement('pre');
+    pre.textContent = JSON.stringify(parsed || {}, null, 2);
+
+    jsonDetails.append(summary, pre);
+
+    content.append(title, fileInfo, table, jsonDetails);
+    openViaAdapterOrLegacy(content);
+  }
+
   function createBackupSettingsFeature() {
     return {
       id: 'backup',
@@ -84,9 +171,11 @@
               const [file] = fileInput.files || [];
               if (!file) return;
               const text = await file.text();
-              const ok = UI.backup?.import?.(text);
+              const parsed = safeParse(text);
+              const ok = UI.backup?.import?.(parsed ?? text);
               status.textContent = ok ? 'Backup імпортовано.' : 'Не вдалося імпортувати backup.';
               UI.toast?.show?.(status.textContent, { type: ok ? 'success' : 'error' });
+              openImportResultModal({ fileName: file.name, parsed, ok });
               fileInput.value = '';
             });
 

@@ -1,0 +1,18 @@
+Step52 — Alternative A: ручне керування route через Debug Center
+
+Що зроблено:
+1) Розширено Debug Center (`src/ui/ui_debug_center.js`) новим блоком:
+   - `Alternative A adapter controls`
+   - Ввід `screen id`
+   - Вибір route (`sws` / `legacy`)
+   - Кнопки: `Set route`, `Get route`, `Health + routes`
+
+2) Блок показує:
+   - наявність адаптера
+   - adapter health
+   - поточний snapshot route map
+   - результат виконаної дії та помилки (якщо є)
+
+Навіщо:
+- Для поекранної міграції в Alternative A потрібен простий runtime-контроль маршрутів.
+- Це дає змогу тестувати перемикання каналу без редагування коду і без перезапуску міграційних гілок.

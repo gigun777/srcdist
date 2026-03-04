@@ -163,7 +163,6 @@ function openQuickNavRoot({ sdo }) {
   const QN = window.SWSQuickNav;
   if (!SW || !QN) {
     console.warn('QuickNav: SettingsWindow or SWSQuickNav not loaded');
-    return;
   }
 
   const buildJTreeSnapshot = (st) => {
@@ -390,8 +389,14 @@ function openQuickNavRoot({ sdo }) {
       }
     };
 
+    idxInput.addEventListener('keydown', onKey);
+    tplSearch.addEventListener('keydown', onKey);
+
     card.append(rowIdx, rowSearch, list, warn, addBtn);
     body.append(card);
+
+    renderList();
+    setTimeout(() => idxInput.focus(), 0);
 
     SW.push({
       title: 'Додати журнал',
@@ -399,19 +404,32 @@ function openQuickNavRoot({ sdo }) {
       saveLabel: 'Додати',
       content: () => body,
       onSave: doAdd,
-      onMount: () => {
-        rebuildSelect();
-        document.addEventListener('keydown', onKey, true);
-        setTimeout(() => idxInput.focus(), 0);
-        renderList();
-      },
-      onUnmount: () => {
-        document.removeEventListener('keydown', onKey, true);
-      },
     });
   };
 
   const open = async () => {
+    const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+    if (adapter && typeof adapter.open === 'function') {
+      const legacyContent = document.createElement('div');
+      legacyContent.textContent = 'QuickNav доступний лише через SWS у цій версії.';
+      const adapterResult = adapter.open({
+        screenId: 'quicknav.root',
+        swsOpen: () => {
+          if (!SW || !QN) throw new Error('QuickNav SWS dependencies are unavailable');
+          return openSwsRoot();
+        },
+        legacy: { title: 'QuickNav', contentNode: legacyContent, closeOnOverlay: true }
+      });
+      if (adapterResult?.ok) return;
+    }
+
+    if (!(await openSwsRoot())) {
+      console.warn('QuickNav: unable to open (missing SWS dependencies and adapter fallback)');
+    }
+  };
+
+  const openSwsRoot = async () => {
+    if (!SW || !QN) return false;
     SW.openCustomRoot(() => {
       QN.openQuickNavScreen({
         getData: async () => {
@@ -1730,11 +1748,35 @@ async function importCurrentJournalJson() {
 
     body.append(title, grid, hr, zipRow);
 
-    window.UI?.modal?.open?.({
+    const adapter = window.UI?.swsAdapter || window.SWSAdapter || null;
+    const legacyPayload = {
       title: 'Backup',
       contentNode: body,
       closeOnOverlay: true,
-    });
+    };
+
+    if (adapter && typeof adapter.open === 'function') {
+      const adapterResult = adapter.open({
+        screenId: 'backup.manager',
+        swsOpen: () => {
+          const SW = window.SettingsWindow;
+          if (!SW || typeof SW.openCustomRoot !== 'function' || typeof SW.push !== 'function') {
+            throw new Error('Backup SWS dependencies are unavailable');
+          }
+          SW.openCustomRoot(() => SW.push({
+            title: 'Backup',
+            subtitle: `Поточний журнал: ${getActiveJournalTitle()}`,
+            content: body,
+            saveLabel: 'OK',
+            canSave: () => false,
+          }));
+        },
+        legacy: legacyPayload,
+      });
+      if (adapterResult?.ok) return;
+    }
+
+    window.UI?.modal?.open?.(legacyPayload);
   }
 
 
