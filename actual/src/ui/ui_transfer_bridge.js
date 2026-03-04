@@ -9,6 +9,7 @@
  * - ctx.api.tableStore exists (from table_store module)
  */
 import { createTransferCore } from '../core/transfer_core.js';
+import { computeTreeNumbering } from '../core/numbering_core.js';
 
 function uniqPush(arr, v){ if(v==null) return; if(!arr.includes(v)) arr.push(v); }
 function ensureArray(x){ return Array.isArray(x) ? x : []; }
@@ -510,6 +511,7 @@ export function attachTransferUI(ctx){
         templates: applicable,
         templateId: applicable[0]?.id || null,
         scenario: 'existing', // 'existing' | 'new'
+        destSpaceId: null,
         destJournalId: null
       };
 
@@ -519,43 +521,250 @@ export function attachTransferUI(ctx){
 const resolveDestCandidates = (tpl)=>{
   const toKey = tpl?.toSheetKey;
   if(!toKey) return [];
+
+  // Index journal meta from state (spaceId, parentId, index)
+  const metaById = {};
+  for(const j of ensureArray(stateNow.journals)){
+    const jid = j?.id ?? j?.key;
+    if(!jid) continue;
+    metaById[jid] = {
+      id: jid,
+      title: j?.title ?? j?.name ?? jid,
+      spaceId: j?.spaceId ?? null,
+      parentId: j?.parentId ?? null,
+      templateId: j?.templateId ?? j?.tplId ?? null,
+      index: (typeof j?.index === 'number' ? j.index : null),
+    };
+  }
+
   const uniq = new Map();
-  // direct journal match
+  const add = (jid, base={})=>{
+    if(!jid) return;
+    const m = metaById[jid] || {};
+    const prev = uniq.get(jid) || {};
+    uniq.set(jid, {
+      id: jid,
+      title: base.title ?? prev.title ?? m.title ?? jid,
+      spaceId: base.spaceId ?? prev.spaceId ?? m.spaceId ?? null,
+      parentId: base.parentId ?? prev.parentId ?? m.parentId ?? null,
+      templateId: base.templateId ?? prev.templateId ?? m.templateId ?? null,
+      index: (base.index ?? prev.index ?? m.index ?? null)
+    });
+  };
+
+  // direct journal match by id
   for(const s of ensureArray(sheets)){
     if(s?.key === toKey){
-      uniq.set(s.key, { id: s.key, title: s.name ?? s.key });
+      add(s.key, { title: s.name ?? s.key, templateId: s.tplId ?? null });
     }
   }
+
   // templateId match via state journals
   for(const j of ensureArray(stateNow.journals)){
     const jid = j?.id ?? j?.key;
     if(!jid) continue;
     const tplId = j?.templateId ?? j?.tplId ?? null;
     if(tplId && tplId === toKey){
-      uniq.set(jid, { id: jid, title: j?.title ?? j?.name ?? jid });
+      add(jid, {
+        title: j?.title ?? j?.name ?? jid,
+        spaceId: j?.spaceId ?? null,
+        parentId: j?.parentId ?? null,
+        templateId: tplId,
+        index: (typeof j?.index === 'number' ? j.index : null)
+      });
     }
   }
-  // templateId match via sheets view
+
+  // templateId match via sheets view (fallback)
   for(const s of ensureArray(sheets)){
     if(s?.tplId && s.tplId === toKey){
-      uniq.set(s.key, { id: s.key, title: s.name ?? s.key });
+      add(s.key, { title: s.name ?? s.key, templateId: s.tplId });
     }
   }
+
   return Array.from(uniq.values());
 };
 
 const getTemplateById = (id)=> ensureArray(transferState.templates).find(t => t?.id === id) || null;
 
+function computeVisibleSpacesFromCandidates(cands){
+  const spaces = ensureArray(stateNow.spaces);
+  const byId = {};
+  for(const sp of spaces){
+    const sid = sp?.id ?? sp?.key;
+    if(!sid) continue;
+    byId[sid] = {
+      id: sid,
+      title: sp?.title ?? sp?.name ?? sid,
+      parentId: sp?.parentId ?? null,
+      createdAt: sp?.createdAt ?? null
+    };
+  }
+
+  const visible = new Set();
+  const addAnc = (sid)=>{
+    let cur = sid;
+    let guard = 0;
+    while(cur && byId[cur] && guard < 50){
+      visible.add(cur);
+      cur = byId[cur].parentId;
+      guard++;
+    }
+  };
+  for(const c of ensureArray(cands)){
+    if(c?.spaceId) addAnc(c.spaceId);
+  }
+
+  const children = {};
+  for(const id of visible){
+    const pid = byId[id]?.parentId ?? null;
+    if(pid && visible.has(pid)){
+      (children[pid] ||= []).push(id);
+    }
+  }
+
+  const rootIds = Array.from(visible).filter(id=>{
+    const pid = byId[id]?.parentId ?? null;
+    return !pid || !visible.has(pid);
+  });
+
+  const sortIds = (ids)=>{
+    ids.sort((a,b)=>{
+      const A = byId[a] || {};
+      const B = byId[b] || {};
+      const ca = A.createdAt ? Date.parse(A.createdAt) : NaN;
+      const cb = B.createdAt ? Date.parse(B.createdAt) : NaN;
+      const ha = Number.isFinite(ca);
+      const hb = Number.isFinite(cb);
+      if(ha && hb && ca !== cb) return ca - cb;
+      if(ha && !hb) return -1;
+      if(!ha && hb) return 1;
+      return String(A.title||'').localeCompare(String(B.title||''));
+    });
+  };
+  sortIds(rootIds);
+  for(const pid of Object.keys(children)) sortIds(children[pid]);
+
+  const numbering = computeTreeNumbering(rootIds, (id)=> children[id] || []);
+  return { byId, children, rootIds, numbering, visible };
+}
+
+function buildJournalTreeForSpace(spaceId, candidateIds){
+  const list = ensureArray(stateNow.journals).filter(j => (j?.spaceId ?? null) === spaceId);
+
+  const nodes = {};
+  const meta = {};
+  for(const j of list){
+    const id = j?.id ?? j?.key;
+    if(!id) continue;
+    nodes[id] = {
+      id,
+      title: j?.title ?? j?.name ?? id,
+      parentId: j?.parentId ?? null,
+      children: []
+    };
+    meta[id] = {
+      idx: (typeof j?.index === 'number' ? j.index : 1e9),
+      title: String(j?.title ?? j?.name ?? id)
+    };
+  }
+
+  const topIds = [];
+  for(const j of list){
+    const id = j?.id ?? j?.key;
+    if(!id || !nodes[id]) continue;
+    const pid = j?.parentId ?? null;
+    if(pid && nodes[pid]) nodes[pid].children.push(id);
+    else topIds.push(id);
+  }
+
+  const sortIds = (ids)=>{
+    ids.sort((a,b)=>{
+      const A = meta[a] || { idx: 1e9, title: '' };
+      const B = meta[b] || { idx: 1e9, title: '' };
+      if(A.idx !== B.idx) return A.idx - B.idx;
+      return A.title.localeCompare(B.title);
+    });
+  };
+  sortIds(topIds);
+  for(const id of Object.keys(nodes)) sortIds(nodes[id].children);
+
+  const candSet = new Set(ensureArray(candidateIds).filter(Boolean));
+  const visible = new Set();
+  const addAnc = (jid)=>{
+    let cur = jid;
+    let guard = 0;
+    while(cur && nodes[cur] && guard < 50){
+      visible.add(cur);
+      cur = nodes[cur].parentId;
+      guard++;
+    }
+  };
+  for(const id of candSet) addAnc(id);
+
+  const children = {};
+  for(const id of visible){
+    const pid = nodes[id]?.parentId ?? null;
+    if(pid && visible.has(pid)){
+      (children[pid] ||= []).push(id);
+    }
+  }
+
+  const rootIds = Array.from(visible).filter(id=>{
+    const pid = nodes[id]?.parentId ?? null;
+    return !pid || !visible.has(pid);
+  });
+
+  const numbering = computeTreeNumbering(
+    rootIds.slice().sort((a,b)=>{
+      const A = meta[a] || { idx:1e9, title:'' };
+      const B = meta[b] || { idx:1e9, title:'' };
+      if(A.idx !== B.idx) return A.idx - B.idx;
+      return A.title.localeCompare(B.title);
+    }),
+    (id)=> (children[id] || []).slice().sort((a,b)=>{
+      const A = meta[a] || { idx:1e9, title:'' };
+      const B = meta[b] || { idx:1e9, title:'' };
+      if(A.idx !== B.idx) return A.idx - B.idx;
+      return A.title.localeCompare(B.title);
+    })
+  );
+
+  return { nodes, meta, visible, children, rootIds, numbering };
+}
+
 const ensureDest = (ctxObj)=>{
   const tpl = getTemplateById(ctxObj?.templateId);
   const cands = resolveDestCandidates(tpl);
-  if(!ctxObj?.destJournalId){
-    if(ctxObj) ctxObj.destJournalId = cands?.[0]?.id ?? null;
+
+  // Space tree visibility comes from candidate journals only
+  const spacesSnap = computeVisibleSpacesFromCandidates(cands);
+  const candById = new Map(cands.map(c=>[c.id, c]));
+  const impliedSpace = ctxObj?.destJournalId ? (candById.get(ctxObj.destJournalId)?.spaceId ?? null) : null;
+  const firstCandSpace = cands.find(c=>c?.spaceId)?.spaceId ?? null;
+
+  if(!ctxObj?.destSpaceId){
+    ctxObj.destSpaceId = impliedSpace || firstCandSpace || spacesSnap.rootIds[0] || null;
   }
-  if(ctxObj?.destJournalId && cands.length && !cands.some(j => j.id === ctxObj.destJournalId)){
-    if(ctxObj) ctxObj.destJournalId = cands[0]?.id ?? null;
+  if(ctxObj?.destSpaceId && spacesSnap.visible && spacesSnap.visible.size && !spacesSnap.visible.has(ctxObj.destSpaceId)){
+    ctxObj.destSpaceId = impliedSpace || firstCandSpace || spacesSnap.rootIds[0] || null;
   }
-  return cands;
+
+  const candsInSpace = cands.filter(c => (c?.spaceId ?? null) === (ctxObj?.destSpaceId ?? null));
+
+  if(candsInSpace.length === 0){
+    // selected space is an ancestor path or empty; journal must be chosen by selecting a space that contains candidates
+    ctxObj.destJournalId = null;
+  } else {
+    if(!ctxObj?.destJournalId){
+      ctxObj.destJournalId = candsInSpace[0]?.id ?? null;
+    }
+    if(ctxObj?.destJournalId && !candsInSpace.some(j => j.id === ctxObj.destJournalId)){
+      ctxObj.destJournalId = candsInSpace[0]?.id ?? null;
+    }
+  }
+
+  return { tpl, cands, candsInSpace, spacesSnap };
 };
 
 // NOTE:
@@ -577,7 +786,7 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
     const tplSelect = ui.select({
       value: ctx2.templateId,
       options: tplOptions,
-      onChange: (v)=>{ ctx2.templateId = v; ctx2.destJournalId = null; renderTree(); renderPreview(); }
+      onChange: (v)=>{ ctx2.templateId = v; ctx2.destSpaceId = null; ctx2.destJournalId = null; renderTree(); renderPreview(); }
     });
     const scenarioSelect = ui.select({
       value: ctx2.scenario,
@@ -639,100 +848,238 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
       children: [previewHost]
     });
 
-    // Card (placeholder): simplified navigation tree for destination journals
+    // Card: destination picker (2 panes: Spaces + Journals) filtered by route destination template
     const treeHost = ui.el('div','');
     const cardTree = ui.card({
       title: 'Журнал призначення',
-      description: 'Оберіть журнал призначення (спрощений список)',
+      description: 'Оберіть простір (ліворуч) та журнал (праворуч). Показуються лише простори/журнали, що відповідають шаблону призначення маршруту.',
       children: [treeHost]
     });
 
     function renderTree(){
-  treeHost.innerHTML = '';
-      const tpl = getTemplateById(ctx2.templateId);
-      const cands = ensureDest(ctx2);
+      treeHost.innerHTML = '';
 
-  if(!tpl){
-    treeHost.appendChild(ui.el('div','', 'Шаблон не обрано'));
-    return;
-  }
-  if(!cands || cands.length === 0){
-    treeHost.appendChild(ui.el('div','', 'Немає журналів, що відповідають шаблону призначення'));
-    return;
-  }
+      const { tpl, cands, candsInSpace, spacesSnap } = ensureDest(ctx2);
 
-  // Search + list (active immediately)
-  const wrap = ui.el('div','');
-  wrap.style.display = 'flex';
-  wrap.style.flexDirection = 'column';
-  wrap.style.gap = '8px';
+      if(!tpl){
+        treeHost.appendChild(ui.el('div','', 'Шаблон не обрано'));
+        return;
+      }
+      if(!cands || cands.length === 0){
+        treeHost.appendChild(ui.el('div','', 'Немає журналів, що відповідають шаблону призначення'));
+        return;
+      }
+      if(!spacesSnap?.visible || spacesSnap.visible.size === 0){
+        treeHost.appendChild(ui.el('div','', 'Немає просторів з журналами призначення'));
+        return;
+      }
 
-  const search = document.createElement('input');
-  search.type = 'search';
-  search.placeholder = 'Пошук журналу…';
-  search.className = 'sws-input';
-  search.style.width = '100%';
+      const split = ui.el('div','');
+      split.style.display = 'grid';
+      split.style.gridTemplateColumns = '1fr 1fr';
+      split.style.gap = '12px';
+      split.style.alignItems = 'start';
 
-  const list = ui.el('div','');
-  list.style.display = 'flex';
-  list.style.flexDirection = 'column';
-  list.style.gap = '6px';
-  list.style.border = '1px solid rgba(0,0,0,.12)';
-  list.style.borderRadius = '10px';
-  list.style.padding = '10px';
-  list.style.maxHeight = '260px';
-  list.style.overflow = 'auto';
+      // ---- Left pane: Spaces ----
+      const paneSpaces = ui.el('div','');
+      paneSpaces.style.display = 'flex';
+      paneSpaces.style.flexDirection = 'column';
+      paneSpaces.style.gap = '8px';
 
-  const getDepth = (id)=> (String(id||'').split('.').length - 1);
+      const spHead = ui.el('div','sws-muted', 'Простори');
+      const spSearch = document.createElement('input');
+      spSearch.type = 'search';
+      spSearch.placeholder = 'Пошук простору…';
+      spSearch.className = 'sws-input';
+      spSearch.style.width = '100%';
 
-  const renderList = ()=>{
-    list.innerHTML = '';
-    const q = String(search.value||'').trim().toLowerCase();
+      const spList = ui.el('div','');
+      spList.style.display = 'flex';
+      spList.style.flexDirection = 'column';
+      spList.style.gap = '6px';
+      spList.style.border = '1px solid rgba(0,0,0,.12)';
+      spList.style.borderRadius = '10px';
+      spList.style.padding = '10px';
+      spList.style.maxHeight = '320px';
+      spList.style.overflow = 'auto';
 
-    const rows = (cands||[])
-      .slice()
-      .sort((a,b)=>String(a.id||'').localeCompare(String(b.id||'')))
-      .filter(j=>{
-        if(!q) return true;
-        const t = (j.title ?? j.id ?? '').toString().toLowerCase();
-        const i = (j.id ?? '').toString().toLowerCase();
-        return t.includes(q) || i.includes(q);
-      });
+      paneSpaces.appendChild(spHead);
+      paneSpaces.appendChild(spSearch);
+      paneSpaces.appendChild(spList);
 
-    if(!rows.length){
-      list.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
-      return;
+      // ---- Right pane: Journals in selected space ----
+      const paneJournals = ui.el('div','');
+      paneJournals.style.display = 'flex';
+      paneJournals.style.flexDirection = 'column';
+      paneJournals.style.gap = '8px';
+
+      const jHead = ui.el('div','sws-muted', 'Журнали');
+      const jSearch = document.createElement('input');
+      jSearch.type = 'search';
+      jSearch.placeholder = 'Пошук журналу…';
+      jSearch.className = 'sws-input';
+      jSearch.style.width = '100%';
+
+      const jList = ui.el('div','');
+      jList.style.display = 'flex';
+      jList.style.flexDirection = 'column';
+      jList.style.gap = '6px';
+      jList.style.border = '1px solid rgba(0,0,0,.12)';
+      jList.style.borderRadius = '10px';
+      jList.style.padding = '10px';
+      jList.style.maxHeight = '320px';
+      jList.style.overflow = 'auto';
+
+      paneJournals.appendChild(jHead);
+      paneJournals.appendChild(jSearch);
+      paneJournals.appendChild(jList);
+
+      split.appendChild(paneSpaces);
+      split.appendChild(paneJournals);
+      treeHost.appendChild(split);
+
+      const norm = (v)=>String(v||'').toLowerCase().trim();
+
+      function renderSpaces(){
+        spList.innerHTML = '';
+        const q = norm(spSearch.value);
+
+        // Build search-visible set: show matches + ancestors
+        const visible = new Set();
+        const markAnc = (sid)=>{
+          let cur = sid;
+          let guard = 0;
+          while(cur && spacesSnap.byId[cur] && guard < 50){
+            visible.add(cur);
+            cur = spacesSnap.byId[cur].parentId;
+            guard++;
+          }
+        };
+        if(q){
+          for(const sid of spacesSnap.visible){
+            const t = norm(spacesSnap.byId[sid]?.title);
+            if(t.includes(q)) markAnc(sid);
+          }
+        } else {
+          for(const sid of spacesSnap.visible) visible.add(sid);
+        }
+
+        const renderNode = (sid, depth)=>{
+          if(!visible.has(sid)) return;
+          const sp = spacesSnap.byId[sid];
+          const num = spacesSnap.numbering?.get?.(sid) || '';
+          const label = num ? `${num} ${sp?.title ?? sid}` : (sp?.title ?? sid);
+
+          const btn = ui.el('button','sws-qnav-btn', label);
+          btn.type = 'button';
+          btn.style.textAlign = 'left';
+          btn.style.marginLeft = (depth * 14) + 'px';
+          if(sid === ctx2.destSpaceId) btn.classList.add('sws-qnav-active');
+          btn.onclick = ()=>{
+            ctx2.destSpaceId = sid;
+            ctx2.destJournalId = null;
+            ensureDest(ctx2);
+            renderSpaces();
+            renderJournals();
+            renderPreview();
+          };
+          spList.appendChild(btn);
+
+          const kids = (spacesSnap.children[sid] || []).filter(id=>visible.has(id));
+          for(const cid of kids) renderNode(cid, depth+1);
+        };
+
+        for(const rid of spacesSnap.rootIds){
+          renderNode(rid, 0);
+        }
+
+        if(!spList.childElementCount){
+          spList.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
+        }
+      }
+
+      function renderJournals(){
+        jList.innerHTML = '';
+        const sid = ctx2.destSpaceId;
+        if(!sid){
+          jList.appendChild(ui.el('div','sws-muted','Оберіть простір зліва'));
+          return;
+        }
+
+        const ids = candsInSpace.map(c=>c.id);
+        if(!ids.length){
+          jList.appendChild(ui.el('div','sws-muted','У цьому просторі немає журналів, що відповідають шаблону призначення. Оберіть інший (під)простір.'));
+          return;
+        }
+
+        const jtree = buildJournalTreeForSpace(sid, ids);
+        const q = norm(jSearch.value);
+
+        // Search-visible set: matches + ancestors
+        const visible = new Set();
+        const markAnc = (jid)=>{
+          let cur = jid;
+          let guard = 0;
+          while(cur && jtree.nodes[cur] && guard < 50){
+            visible.add(cur);
+            cur = jtree.nodes[cur].parentId;
+            guard++;
+          }
+        };
+        if(q){
+          for(const jid of jtree.visible){
+            const t = norm(jtree.nodes[jid]?.title);
+            if(t.includes(q)) markAnc(jid);
+          }
+        } else {
+          for(const jid of jtree.visible) visible.add(jid);
+        }
+
+        const renderNode = (jid, depth)=>{
+          if(!visible.has(jid)) return;
+          const n = jtree.nodes[jid];
+          const num = jtree.numbering?.get?.(jid) || '';
+          const label = num ? `${num} ${n?.title ?? jid}` : (n?.title ?? jid);
+
+          const btn = ui.el('button','sws-qnav-btn', label);
+          btn.type = 'button';
+          btn.style.textAlign = 'left';
+          btn.style.marginLeft = (depth * 14) + 'px';
+          if(jid === ctx2.destJournalId) btn.classList.add('sws-qnav-active');
+          btn.onclick = ()=>{
+            ctx2.destJournalId = jid;
+            ensureDest(ctx2);
+            renderJournals();
+            renderPreview();
+          };
+          jList.appendChild(btn);
+
+          const kids = (jtree.children[jid] || []).filter(id=>visible.has(id));
+          for(const cid of kids) renderNode(cid, depth+1);
+        };
+
+        // roots (in visible set)
+        const roots = (jtree.rootIds || []).filter(id=>visible.has(id));
+        // stable sort by numbering if present
+        roots.sort((a,b)=>String(jtree.numbering?.get?.(a) || '').localeCompare(String(jtree.numbering?.get?.(b) || '')));
+        for(const rid of roots){
+          renderNode(rid, 0);
+        }
+
+        if(!jList.childElementCount){
+          jList.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
+        }
+      }
+
+      spSearch.addEventListener('input', ()=>{ renderSpaces(); });
+      jSearch.addEventListener('input', ()=>{ renderJournals(); });
+
+      renderSpaces();
+      renderJournals();
     }
 
-    for(const j of rows){
-      const btn = ui.el('button','sws-qnav-btn', `${j.title ?? j.id}`);
-      btn.type = 'button';
-      btn.style.textAlign = 'left';
-      btn.style.marginLeft = (getDepth(j.id) * 14) + 'px';
-      if(j.id === ctx2.destJournalId) btn.classList.add('sws-qnav-active');
-      btn.onclick = ()=>{
-        ctx2.destJournalId = j.id;
-        renderList();
-        renderPreview();
-      };
-      list.appendChild(btn);
-    }
-  };
 
-  search.addEventListener('input', renderList);
-
-  wrap.appendChild(search);
-  wrap.appendChild(list);
-  treeHost.appendChild(wrap);
-
-  // Ensure selection exists and render immediately
-      if(!ctx2.destJournalId){
-        ctx2.destJournalId = cands[0]?.id ?? null;
-  }
-  renderList();
-}
-
-async function renderPreview(){
+    async function renderPreview(){
       previewHost.innerHTML = '';
       const template = getTemplateById(ctx2.templateId);
       if(!template){

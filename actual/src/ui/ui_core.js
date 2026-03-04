@@ -9,6 +9,7 @@ import { createModalManager } from './ui_modal.js';
 import './theme.js';
 import './ui_manager.js';
 import './ui_backup.js';
+import { openBackupManager } from './backup/backup_manager.js';
 import './ui_toast.js';
 import { openDebugCenter } from './ui_debug_center.js';
 import './settings/settings_registry.js';
@@ -781,6 +782,7 @@ export function createModuleManagerUI({ sdo, mount, api }) {
 // -----------------------------
   // Backup / Import / Export modal
   // -----------------------------
+  // NOTE: implemented as a separate module (single SWS window)
   function openBackupModal() {
     const sdoInst = sdo || window.sdo;
     if (!sdoInst) {

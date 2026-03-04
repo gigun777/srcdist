@@ -9,6 +9,7 @@ import { createModalManager } from './ui_modal.js';
 import './theme.js';
 import './ui_manager.js';
 import './ui_backup.js';
+import { openBackupManager } from './backup/backup_manager.js';
 import './ui_toast.js';
 import { openDebugCenter } from './ui_debug_center.js';
 import './settings/settings_registry.js';
