@@ -253,55 +253,78 @@ export function attachTransferUI(ctx){
 
   // Full-view (table-like) picker: user selects a row by DOUBLE CLICK.
   // This is a lightweight approximation of "full journal view" until we embed the real renderer.
-  async function pickTargetRecordIdFull({ journalId, colKeys, colLabels }){
+  async function pickTargetRecordIdFull({ SettingsWindow, journalId, colKeys, colLabels }){
     const ds = await tableStore.getDataset(journalId);
     const records = ensureArray(ds?.records);
-    const wrap = createEl('div', { style:'display:flex;flex-direction:column;gap:10px;min-width:680px;max-width:960px;max-height:70vh;' });
-    wrap.appendChild(createEl('div', { style:'font-weight:700;' }, 'Оберіть строку (подвійний клік)'));
 
-    const table = createEl('div', { style:'border:1px solid rgba(0,0,0,.12);border-radius:10px;overflow:auto;flex:1;background:#fff;' });
-    const grid = createEl('div', { style:`display:grid;grid-template-columns:${ensureArray(colKeys).map(()=> 'minmax(140px,1fr)').join(' ')};gap:0;border-collapse:collapse;` });
-
-    // header
-    for(let i=0;i<colKeys.length;i++){
-      const th = createEl('div', { style:'position:sticky;top:0;background:rgba(0,0,0,.04);padding:8px 10px;font-weight:600;border-bottom:1px solid rgba(0,0,0,.12);' }, colLabels?.[i] ?? colKeys[i]);
-      grid.appendChild(th);
+    if(!SettingsWindow?.push || !SettingsWindow?.pop){
+      return records?.[0]?.id ?? null;
     }
-    // rows
-    for(const r of records){
-      for(let i=0;i<colKeys.length;i++){
-        const k = colKeys[i];
-        const v = r?.cells?.[k];
-        const td = createEl('div', { style:'padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);border-right:1px solid rgba(0,0,0,.04);white-space:pre-wrap;cursor:default;', 'data-id': r.id }, String(v ?? ''));
-        // store record id for dblclick
-        td.ondblclick = ()=>{}; // will be overridden by container handler
-        grid.appendChild(td);
-      }
-    }
-    table.appendChild(grid);
-    wrap.appendChild(table);
-
-    wrap.appendChild(createEl('div', { style:'display:flex;justify-content:flex-end;gap:10px;' }, [
-      createEl('button', { type:'button', 'data-act':'cancel' }, 'Скасувати')
-    ]));
 
     return await new Promise((resolve)=>{
-      let modalRec=null;
-      const close=()=>{ try{ modalRec?.close?.(); }catch{} };
-      wrap.addEventListener('click',(e)=>{
-        const btn=e.target.closest('button');
-        if(!btn) return;
-        const act=btn.getAttribute('data-act');
-        if(act==='cancel'){ close(); resolve(null); }
-      });
-      wrap.addEventListener('dblclick',(e)=>{
-        const cell = e.target.closest('[data-id]');
-        const id = cell?.getAttribute?.('data-id');
-        if(id){ close(); resolve(id); }
-      });
+      let settled = false;
+      const done = (id)=>{
+        if(settled) return;
+        settled = true;
+        try{ SettingsWindow.pop(); }catch(_){ }
+        resolve(id ?? null);
+      };
 
-      modalRec = UI.modal?.open ? UI.modal.open({ title:'Вибір строки', contentNode: wrap }) : null;
-      if(!modalRec) resolve(records?.[0]?.id ?? null);
+      SettingsWindow.push({
+        title: 'Вибір строки',
+        subtitle: 'Оберіть строку призначення',
+        saveLabel: 'OK',
+        canSave: ()=> false,
+        content: (ctx)=>{
+          const ui = ctx.ui;
+          const wrap = ui.el('div','');
+          wrap.style.display='flex';
+          wrap.style.flexDirection='column';
+          wrap.style.gap='8px';
+
+          const search = document.createElement('input');
+          search.type = 'search';
+          search.placeholder = 'Пошук по строках…';
+          search.className = 'sws-input';
+
+          const list = ui.el('div','');
+          list.style.display='flex';
+          list.style.flexDirection='column';
+          list.style.gap='6px';
+          list.style.maxHeight='58vh';
+          list.style.overflow='auto';
+
+          const labels = ensureArray(colLabels).length ? colLabels : ensureArray(colKeys);
+          const rowText = (r)=> ensureArray(colKeys).map((k, i)=> `${labels[i] ?? k}: ${String(r?.cells?.[k] ?? '')}`).join(' | ');
+
+          const render = ()=>{
+            list.innerHTML='';
+            const q = String(search.value || '').trim().toLowerCase();
+            const rows = records.filter((r)=> !q || rowText(r).toLowerCase().includes(q));
+            if(!rows.length){
+              list.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
+              return;
+            }
+            for(const r of rows){
+              const btn = ui.el('button','sws-qnav-btn', rowText(r));
+              btn.type = 'button';
+              btn.style.textAlign='left';
+              btn.onclick = ()=> done(r?.id ?? null);
+              list.appendChild(btn);
+            }
+          };
+
+          const cancelBtn = ui.el('button','sws-btn','Скасувати');
+          cancelBtn.onclick = ()=> done(null);
+
+          search.addEventListener('input', render);
+          wrap.appendChild(search);
+          wrap.appendChild(list);
+          wrap.appendChild(cancelBtn);
+          render();
+          return wrap;
+        }
+      });
     });
   }
 
@@ -385,45 +408,28 @@ export function attachTransferUI(ctx){
   }
 
   // Build "sheets" definitions based on *journal templates* (not concrete journals).
-  // Used for Transfer Settings (template-oriented transfers).
+  // This is used for Transfer Settings (template-oriented transfers).
   async function buildTemplateSheets(){
-    // Be defensive: depending on bootstrap timing, the host may expose journalTemplates on
-    // different objects. Prefer ctx.api but fallback to global sdo/api.
-    const jt = ctx.api?.journalTemplates
-      || globalThis.sdo?.api?.journalTemplates
-      || globalThis.sdo?.journalTemplates
-      || globalThis.SDO?.api?.journalTemplates
-      || globalThis.__sdo_api?.journalTemplates
-      || globalThis.UI?.sdo?.journalTemplates;
-
-    let templates = [];
-    try{
-      if(jt?.listTemplateEntities) {
-        templates = await jt.listTemplateEntities();
-      } else if(jt?.listTemplates && jt?.getTemplate) {
-        const shallow = await jt.listTemplates();
-        templates = [];
-        for(const s of (Array.isArray(shallow) ? shallow : [])){
-          try{ const full = await jt.getTemplate(s.id); if(full) templates.push(full); }catch(_){ }
-        }
-      } else {
-        templates = [];
-      }
-    }catch(e){
-      console.warn('buildTemplateSheets: journalTemplates API failed', e);
-      templates = [];
-    }
+    const templates = await (ctx.api?.journalTemplates?.listTemplateEntities?.() ?? Promise.resolve([]));
     const sheets = [];
     for(const t of ensureArray(templates)){
       const tplId = t?.id;
       if(!tplId) continue;
       let full = null;
-      try{ if(jt?.getTemplate) full = await jt.getTemplate(tplId); }catch{ full = null; }
+      try{
+        if(ctx.api?.journalTemplates?.getTemplate) full = await ctx.api.journalTemplates.getTemplate(tplId);
+      }catch{ full = null; }
       const colsSrc = ensureArray(full?.columns ?? t?.columns);
       const columns = colsSrc.length
-        ? colsSrc.map(c=>({ id: c.key ?? c.id ?? c.name, name: c.label ?? c.title ?? c.key ?? c.id ?? c.name })).filter(c=>c.id)
+        ? colsSrc.map(c => ({ id: c.key ?? c.id ?? c.name, name: c.label ?? c.title ?? c.key ?? c.id ?? c.name }))
+            .filter(c => c.id)
         : [{ id:'c1', name:'Колонка 1' }];
-      sheets.push({ key: tplId, name: t?.title ?? t?.name ?? tplId, columns, tplId });
+      sheets.push({
+        key: tplId,
+        name: t?.title ?? t?.name ?? tplId,
+        columns,
+        tplId
+      });
     }
     if(sheets.length === 0){
       sheets.push({ key:'default', name:'Default', columns:[{id:'c1',name:'Колонка 1'}], tplId:'default' });
@@ -444,8 +450,10 @@ export function attachTransferUI(ctx){
       UI.toast?.error?.('TransferUI модалка не завантажена') ?? console.error('TransferUI modals not loaded');
       return;
     }
+    // Settings must be template-oriented: use journalTemplates to build "sheets".
     const [sheets, templatesRaw] = await Promise.all([buildTemplateSheets(), core.loadTemplates()]);
     const stateNow = ctx.api?.getState?.() ?? {};
+    // Migrate any legacy (journal-oriented) template links to journal-template IDs.
     const templates = ensureArray(templatesRaw).map(t => ({
       ...t,
       fromSheetKey: migrateJournalKeyToTemplateKey(t?.fromSheetKey, stateNow),
@@ -484,7 +492,7 @@ export function attachTransferUI(ctx){
     const srcRow = rowArrayFromRecord(srcRecord, fromColKeys);
 
     // New Transfer Execute window (SettingsWindow v2 style)
-    if(SettingsWindow?.openRoot){
+    const openTransferSws = ()=>{
       // Filter templates by SOURCE JOURNAL TEMPLATE (preferred) or by SOURCE JOURNAL ID (legacy)
       const applicable = ensureArray(templates).filter(tpl => {
         const k = tpl?.fromSheetKey;
@@ -495,8 +503,8 @@ export function attachTransferUI(ctx){
         return;
       }
 
-      // local transfer execution context
-      const localCtx = {
+      // local transfer execution state (will be passed into SettingsWindow stack ctx)
+      const transferState = {
         sourceJournalId,
         recordIds,
         templates: applicable,
@@ -536,16 +544,16 @@ const resolveDestCandidates = (tpl)=>{
   return Array.from(uniq.values());
 };
 
-const getTemplateById = (id)=> ensureArray(localCtx.templates).find(t => t?.id === id) || null;
+const getTemplateById = (id)=> ensureArray(transferState.templates).find(t => t?.id === id) || null;
 
-const ensureDest = ()=>{
-  const tpl = getTemplateById(localCtx.templateId);
+const ensureDest = (ctxObj)=>{
+  const tpl = getTemplateById(ctxObj?.templateId);
   const cands = resolveDestCandidates(tpl);
-  if(!localCtx.destJournalId){
-    localCtx.destJournalId = cands?.[0]?.id ?? null;
+  if(!ctxObj?.destJournalId){
+    if(ctxObj) ctxObj.destJournalId = cands?.[0]?.id ?? null;
   }
-  if(localCtx.destJournalId && cands.length && !cands.some(j => j.id === localCtx.destJournalId)){
-    localCtx.destJournalId = cands[0]?.id ?? null;
+  if(ctxObj?.destJournalId && cands.length && !cands.some(j => j.id === ctxObj.destJournalId)){
+    if(ctxObj) ctxObj.destJournalId = cands[0]?.id ?? null;
   }
   return cands;
 };
@@ -559,47 +567,25 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
   title: 'Перенесення',
   subtitle: 'Оберіть сценарій та виконайте перенесення',
   saveLabel: 'Перенести',
-  // Enable/disable the "Перенести" button based on current selection.
-  // IMPORTANT: this screen keeps state in the closure `localCtx`, so canSave must read from it.
-  canSave: ()=>{
-    try{
-      const tplOk = !!getTemplateById(localCtx.templateId);
-      const toOk = !!localCtx.destJournalId;
-      return tplOk && toOk;
-    }catch(_){
-      return false;
-    }
-  },
+  ctx: transferState,
   content: (ctx2)=>{
     const ui = ctx2.ui;
     const root = ui.el('div','');
 
-    const isReadyToTransfer = ()=>{
-      const template = getTemplateById(localCtx.templateId);
-      if(!template) return false;
-      if(!localCtx.destJournalId) return false;
-      const toSheet = sheets.find(s => s.key === localCtx.destJournalId) || null;
-      if(!toSheet) return false;
-      return true;
-    };
-    const syncSaveEnabled = ()=>{
-      try{ ctx2.setSaveEnabled(!!isReadyToTransfer()); }catch(_){ /* ignore */ }
-    };
-
     // Card 1: template + scenario
     const tplOptions = applicable.map(t=>({ value: t.id, label: t.title || t.id }));
     const tplSelect = ui.select({
-      value: localCtx.templateId,
+      value: ctx2.templateId,
       options: tplOptions,
-      onChange: (v)=>{ localCtx.templateId = v; localCtx.destJournalId = null; renderTree(); renderPreview(); syncSaveEnabled(); }
+      onChange: (v)=>{ ctx2.templateId = v; ctx2.destJournalId = null; renderTree(); renderPreview(); }
     });
     const scenarioSelect = ui.select({
-      value: localCtx.scenario,
+      value: ctx2.scenario,
       options: [
         { value:'existing', label:'У існуючу строку' },
         { value:'new', label:'У нову строку' }
       ],
-      onChange: (v)=>{ localCtx.scenario = v; renderPreview(); syncSaveEnabled(); }
+      onChange: (v)=>{ ctx2.scenario = v; renderPreview(); }
     });
     const cardScenario = ui.card({
       title: 'Сценарій перенесення',
@@ -625,7 +611,7 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
         cb.type='checkbox';
         cb.checked=!!checked;
         cb.setAttribute('data-line-idx', String(idx));
-        cb.onchange = ()=>{ renderPreview(); syncSaveEnabled(); };
+        cb.onchange = ()=>{ renderPreview(); };
         const txt = ui.el('div','', label);
         row.appendChild(cb);
         row.appendChild(txt);
@@ -661,399 +647,106 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
       children: [treeHost]
     });
 
-
     function renderTree(){
-      treeHost.innerHTML = '';
+  treeHost.innerHTML = '';
+      const tpl = getTemplateById(ctx2.templateId);
+      const cands = ensureDest(ctx2);
 
-      // ---- resolve destination template id (template-oriented transfer) ----
-      const transferTpl = getTemplateById(localCtx.templateId);
-      const toKey = transferTpl?.toSheetKey ?? null;
+  if(!tpl){
+    treeHost.appendChild(ui.el('div','', 'Шаблон не обрано'));
+    return;
+  }
+  if(!cands || cands.length === 0){
+    treeHost.appendChild(ui.el('div','', 'Немає журналів, що відповідають шаблону призначення'));
+    return;
+  }
 
-      // If toKey is a specific journal id, infer its journal-templateId for filtering.
-      // Otherwise treat toKey as destination journal-templateId directly.
-      let destTplId = null;
-      if(toKey){
-        const directSheet = ensureArray(sheets).find(s=>s?.key === toKey) || null;
-        if(directSheet?.tplId) destTplId = directSheet.tplId;
-        else {
-          const directJournal = ensureArray(stateNow.journals).find(j => (j?.id ?? j?.key) === toKey) || null;
-          destTplId = directJournal?.templateId ?? directJournal?.tplId ?? null;
-        }
-        if(!destTplId) destTplId = toKey;
-      }
+  // Search + list (active immediately)
+  const wrap = ui.el('div','');
+  wrap.style.display = 'flex';
+  wrap.style.flexDirection = 'column';
+  wrap.style.gap = '8px';
 
-      if(!destTplId){
-        treeHost.appendChild(ui.el('div','sws-muted','Шаблон призначення не визначено у сценарії перенесення'));
-        syncSaveEnabled();
-        return;
-      }
+  const search = document.createElement('input');
+  search.type = 'search';
+  search.placeholder = 'Пошук журналу…';
+  search.className = 'sws-input';
+  search.style.width = '100%';
 
-      // Inject minimal CSS once (scoped classes)
-      if(!document.getElementById('tt-picker-style')){
-        const st = document.createElement('style');
-        st.id = 'tt-picker-style';
-        st.textContent = `
-          .tt-box{ display:flex; flex-direction:column; gap:10px; }
-          .tt-split{ display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
-          @media (max-width: 820px){ .tt-split{ grid-template-columns:1fr; } }
-          .tt-panel{ border:1px solid rgba(0,0,0,.12); border-radius:12px; padding:10px; background:#fff; }
-          .tt-title{ font-weight:700; margin:0 0 6px 0; }
-          .tt-sub{ font-size:12px; color:rgba(0,0,0,.62); margin:0 0 10px 0; }
-          .tt-input{ width:100%; }
-          .tt-tree{ display:flex; flex-direction:column; gap:6px; max-height:260px; overflow:auto; }
-          .tt-row{ display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:10px; border:1px solid rgba(0,0,0,.08); background:rgba(255,255,255,.9); cursor:pointer; user-select:none; }
-          .tt-row:hover{ background:rgba(0,0,0,.03); }
-          .tt-row.tt-selected{ outline:2px solid rgba(0,0,0,.18); }
-          .tt-row.tt-ancestor{ background:rgba(0,0,0,.04); color:rgba(0,0,0,.65); }
-          .tt-row.tt-match{ background:rgba(255, 233, 150, .45); color:#000; }
-          .tt-chev{ width:14px; text-align:center; opacity:.8; }
-          .tt-num{ display:inline-flex; align-items:center; justify-content:center; min-width:34px; padding:2px 6px; border-radius:999px; border:1px solid rgba(0,0,0,.18); background:rgba(255,255,255,.9); font-size:12px; font-weight:700; line-height:1.2; }
-          .tt-meta{ font-size:12px; opacity:.65; margin-left:auto; }
-          .tt-empty{ color:rgba(0,0,0,.55); padding:10px; }
-        `;
-        document.head.appendChild(st);
-      }
+  const list = ui.el('div','');
+  list.style.display = 'flex';
+  list.style.flexDirection = 'column';
+  list.style.gap = '6px';
+  list.style.border = '1px solid rgba(0,0,0,.12)';
+  list.style.borderRadius = '10px';
+  list.style.padding = '10px';
+  list.style.maxHeight = '260px';
+  list.style.overflow = 'auto';
 
-      // ---- state helpers ----
-      const state = stateNow;
-      const spaces = ensureArray(state?.spaces);
-      const journals = ensureArray(state?.journals);
+  const getDepth = (id)=> (String(id||'').split('.').length - 1);
 
-      // Local persistent ui state
-      localCtx.__tt = localCtx.__tt || {};
-      localCtx.__tt.collapsedSpaces = localCtx.__tt.collapsedSpaces || new Set();
-      localCtx.__tt.collapsedJournals = localCtx.__tt.collapsedJournals || new Set();
-      localCtx.__tt.spaceQuery = localCtx.__tt.spaceQuery || '';
-      localCtx.__tt.journalQuery = localCtx.__tt.journalQuery || '';
+  const renderList = ()=>{
+    list.innerHTML = '';
+    const q = String(search.value||'').trim().toLowerCase();
 
-      // Resolve which spaces contain at least one journal with destTplId (direct in that space)
-      const spaceMatchSet = new Set();
-      for(const j of journals){
-        const jid = j?.id ?? j?.key;
-        if(!jid) continue;
-        const jTpl = j?.templateId ?? j?.tplId ?? null;
-        if(jTpl !== destTplId) continue;
-        const sid = j?.spaceId ?? null;
-        if(sid) spaceMatchSet.add(sid);
-      }
-
-      // Build space snapshot
-      const spaceSnapshot = buildTreeSnapshot(spaces, (x)=>({
-        id: x?.id,
-        parentId: x?.parentId ?? null,
-        title: x?.title ?? x?.name ?? String(x?.id ?? '')
-      }));
-
-      // Visible spaces = match + ancestors (avoid дыр)
-      const spaceVisibleSet = computeVisibleSet(spaceSnapshot, spaceMatchSet);
-
-      // Keep selected space stable
-      if(!localCtx.__tt.destSpaceId){
-        // Default: first matching space (preferred) else first root
-        localCtx.__tt.destSpaceId = spaceMatchSet.values().next().value || spaceSnapshot.rootIds[0] || null;
-      }
-      if(localCtx.__tt.destSpaceId && !spaceVisibleSet.has(localCtx.__tt.destSpaceId)){
-        localCtx.__tt.destSpaceId = spaceMatchSet.values().next().value || spaceSnapshot.rootIds[0] || null;
-        localCtx.destJournalId = null;
-      }
-
-      // Build UI layout
-      const box = ui.el('div','tt-box');
-      const split = ui.el('div','tt-split');
-
-      // Space panel
-      const pSpace = ui.el('div','tt-panel');
-      pSpace.appendChild(ui.el('div','tt-title','Простір'));
-      pSpace.appendChild(ui.el('div','tt-sub',`Показані лише шляхи до просторів, що містять журнали шаблону ${destTplId}. Жовті — доступні для вибору.`));
-
-      const inpSpace = document.createElement('input');
-      inpSpace.type = 'search';
-      inpSpace.placeholder = 'Пошук простору…';
-      inpSpace.className = 'sws-input tt-input';
-      inpSpace.value = localCtx.__tt.spaceQuery || '';
-      inpSpace.addEventListener('input', ()=>{
-        localCtx.__tt.spaceQuery = inpSpace.value || '';
-        renderTree();
-      });
-      pSpace.appendChild(inpSpace);
-
-      const spaceTreeHost = ui.el('div','tt-tree');
-      pSpace.appendChild(spaceTreeHost);
-
-      // Journal panel
-      const pJournal = ui.el('div','tt-panel');
-      pJournal.appendChild(ui.el('div','tt-title','Журнал призначення'));
-      pJournal.appendChild(ui.el('div','tt-sub','Жовті — відповідають шаблону призначення; сірі — батьківські (шлях).'));
-      const inpJ = document.createElement('input');
-      inpJ.type = 'search';
-      inpJ.placeholder = 'Пошук журналу…';
-      inpJ.className = 'sws-input tt-input';
-      inpJ.value = localCtx.__tt.journalQuery || '';
-      inpJ.addEventListener('input', ()=>{
-        localCtx.__tt.journalQuery = inpJ.value || '';
-        renderTree();
-      });
-      pJournal.appendChild(inpJ);
-
-      const journalTreeHost = ui.el('div','tt-tree');
-      pJournal.appendChild(journalTreeHost);
-
-      split.appendChild(pSpace);
-      split.appendChild(pJournal);
-      box.appendChild(split);
-      treeHost.appendChild(box);
-
-      // ---- render spaces (search without holes inside visibleSet) ----
-      const spaceAfterSearchVisible = applySearch(spaceSnapshot, spaceVisibleSet, localCtx.__tt.spaceQuery);
-      renderTreeList({
-        host: spaceTreeHost,
-        snapshot: spaceSnapshot,
-        visibleSet: spaceAfterSearchVisible,
-        matchSet: spaceMatchSet,
-        selectedId: localCtx.__tt.destSpaceId,
-        collapsed: localCtx.__tt.collapsedSpaces,
-        getMeta: (node)=>`(${node.id})`,
-        onClick: (node, isMatch)=>{
-          if(isMatch){
-            localCtx.__tt.destSpaceId = node.id;
-            // reset journal selection when space changes
-            localCtx.destJournalId = null;
-            renderTree();
-            renderPreview();
-            syncSaveEnabled();
-          }
-        }
+    const rows = (cands||[])
+      .slice()
+      .sort((a,b)=>String(a.id||'').localeCompare(String(b.id||'')))
+      .filter(j=>{
+        if(!q) return true;
+        const t = (j.title ?? j.id ?? '').toString().toLowerCase();
+        const i = (j.id ?? '').toString().toLowerCase();
+        return t.includes(q) || i.includes(q);
       });
 
-      // ---- render journals: only if selected space is match ----
-      const selSpaceId = localCtx.__tt.destSpaceId;
-      if(!selSpaceId){
-        journalTreeHost.appendChild(ui.el('div','tt-empty','Спочатку оберіть простір.'));
-        return;
-      }
-      if(!spaceMatchSet.has(selSpaceId)){
-        journalTreeHost.appendChild(ui.el('div','tt-empty',`У цьому просторі немає журналів шаблону ${destTplId}. Оберіть жовтий простір.`));
-        return;
-      }
-
-      // Build journals for this space as a tree (by parentId)
-      const journalsInSpace = journals.filter(j => (j?.spaceId ?? null) === selSpaceId);
-      const journalSnapshot = buildTreeSnapshot(journalsInSpace, (j)=>({
-        id: j?.id ?? j?.key,
-        parentId: j?.parentId ?? null,
-        title: j?.title ?? j?.name ?? String(j?.id ?? j?.key ?? ''),
-        templateId: j?.templateId ?? j?.tplId ?? null
-      }), { childrenKey:'children' });
-
-      // Match journals by template
-      const journalMatchSet = new Set();
-      for(const [id,node] of journalSnapshot.nodesById.entries()){
-        if(node.templateId === destTplId) journalMatchSet.add(id);
-      }
-      const journalVisibleSet = computeVisibleSet(journalSnapshot, journalMatchSet);
-      const journalAfterSearchVisible = applySearch(journalSnapshot, journalVisibleSet, localCtx.__tt.journalQuery);
-
-      // Keep selected journal stable
-      if(!localCtx.destJournalId){
-        localCtx.destJournalId = journalMatchSet.values().next().value || null;
-      }
-      if(localCtx.destJournalId && !journalVisibleSet.has(localCtx.destJournalId)){
-        localCtx.destJournalId = journalMatchSet.values().next().value || null;
-      }
-
-      renderTreeList({
-        host: journalTreeHost,
-        snapshot: journalSnapshot,
-        visibleSet: journalAfterSearchVisible,
-        matchSet: journalMatchSet,
-        selectedId: localCtx.destJournalId,
-        collapsed: localCtx.__tt.collapsedJournals,
-        getMeta: (node)=> node.templateId ? `(${node.templateId})` : '',
-        onClick: (node, isMatch)=>{
-          if(isMatch){
-            localCtx.destJournalId = node.id;
-            renderTree();
-            renderPreview();
-            syncSaveEnabled();
-          }
-        }
-      });
+    if(!rows.length){
+      list.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
+      return;
     }
 
-    // ---- helpers for renderTree ----
-    function buildTreeSnapshot(items, mapFn){
-      const nodesById = new Map();
-      const childrenByParent = new Map();
-      const rootIds = [];
-      for(const it of ensureArray(items)){
-        const m = mapFn(it) || {};
-        const id = m.id;
-        if(!id) continue;
-        const parentId = m.parentId ?? null;
-        const node = { ...m, id, parentId, children: [] };
-        nodesById.set(id, node);
-        if(!childrenByParent.has(parentId)) childrenByParent.set(parentId, []);
-        childrenByParent.get(parentId).push(id);
-      }
-      // Attach children
-      for(const [pid, childIds] of childrenByParent.entries()){
-        if(pid == null){
-          for(const cid of childIds) rootIds.push(cid);
-        } else {
-          const pnode = nodesById.get(pid);
-          if(pnode) pnode.children = childIds;
-          else {
-            // Orphan => treat as root
-            for(const cid of childIds) rootIds.push(cid);
-          }
-        }
-      }
-      // Ensure every node has children array
-      for(const [id,node] of nodesById.entries()){
-        if(!Array.isArray(node.children)) node.children = [];
-      }
-      return { nodesById, rootIds };
-    }
-
-    function computeVisibleSet(snapshot, matchSet){
-      const visible = new Set(matchSet);
-      for(const id of matchSet){
-        let cur = snapshot.nodesById.get(id);
-        while(cur && cur.parentId){
-          visible.add(cur.parentId);
-          cur = snapshot.nodesById.get(cur.parentId);
-        }
-      }
-      return visible;
-    }
-
-    function applySearch(snapshot, baseVisibleSet, query){
-      const q = String(query||'').trim().toLowerCase();
-      if(!q) return baseVisibleSet;
-      const hits = new Set();
-      for(const [id,node] of snapshot.nodesById.entries()){
-        if(baseVisibleSet && !baseVisibleSet.has(id)) continue;
-        const t = String(node.title||'').toLowerCase();
-        if(t.includes(q)) hits.add(id);
-      }
-      const vis = new Set(hits);
-      for(const id of hits){
-        let cur = snapshot.nodesById.get(id);
-        while(cur && cur.parentId){
-          if(baseVisibleSet && !baseVisibleSet.has(cur.parentId)) break;
-          vis.add(cur.parentId);
-          cur = snapshot.nodesById.get(cur.parentId);
-        }
-      }
-      return vis;
-    }
-
-    function computeNumbering(snapshot){
-      const map = new Map();
-      const dfs = (id, prefix)=>{
-        const node = snapshot.nodesById.get(id);
-        const children = ensureArray(node?.children);
-        for(let i=0;i<children.length;i++){
-          const cid = children[i];
-          const num = prefix + '.' + String(i+1);
-          map.set(cid, num);
-          dfs(cid, num);
-        }
+    for(const j of rows){
+      const btn = ui.el('button','sws-qnav-btn', `${j.title ?? j.id}`);
+      btn.type = 'button';
+      btn.style.textAlign = 'left';
+      btn.style.marginLeft = (getDepth(j.id) * 14) + 'px';
+      if(j.id === ctx2.destJournalId) btn.classList.add('sws-qnav-active');
+      btn.onclick = ()=>{
+        ctx2.destJournalId = j.id;
+        renderList();
+        renderPreview();
       };
-      for(let i=0;i<snapshot.rootIds.length;i++){
-        const rid = snapshot.rootIds[i];
-        const num = String(i+1);
-        map.set(rid, num);
-        dfs(rid, num);
-      }
-      return map;
+      list.appendChild(btn);
     }
+  };
 
-    function renderTreeList({host, snapshot, visibleSet, matchSet, selectedId, collapsed, getMeta, onClick}){
-      host.innerHTML = '';
-      const numbering = computeNumbering(snapshot);
+  search.addEventListener('input', renderList);
 
-      const renderNode = (id, depth)=>{
-        if(visibleSet && !visibleSet.has(id)) return null;
-        const node = snapshot.nodesById.get(id);
-        if(!node) return null;
+  wrap.appendChild(search);
+  wrap.appendChild(list);
+  treeHost.appendChild(wrap);
 
-        const hasChildren = ensureArray(node.children).some(cid => !visibleSet || visibleSet.has(cid));
-        const isMatch = matchSet?.has(id);
-        const row = ui.el('div','tt-row');
-        row.style.marginLeft = (depth * 14) + 'px';
-        if(isMatch) row.classList.add('tt-match'); else row.classList.add('tt-ancestor');
-        if(id === selectedId) row.classList.add('tt-selected');
-
-        const chev = ui.el('span','tt-chev', hasChildren ? (collapsed.has(id) ? '▸' : '▾') : '');
-        const num = ui.el('span','tt-num', numbering.get(id) || '');
-        const title = ui.el('span','', node.title || String(id));
-        const meta = ui.el('span','tt-meta', getMeta ? (getMeta(node) || '') : '');
-
-        row.appendChild(chev);
-        row.appendChild(num);
-        row.appendChild(title);
-        row.appendChild(meta);
-
-        row.onclick = (e)=>{
-          e.preventDefault();
-          e.stopPropagation();
-          if(isMatch){
-            onClick?.(node, true);
-          } else {
-            // ancestor: toggle only
-            if(hasChildren){
-              if(collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
-              renderTree();
-            }
-          }
-        };
-        chev.onclick = (e)=>{
-          e.preventDefault();
-          e.stopPropagation();
-          if(hasChildren){
-            if(collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
-            renderTree();
-          }
-        };
-
-        host.appendChild(row);
-
-        if(hasChildren && !collapsed.has(id)){
-          for(const cid of ensureArray(node.children)){
-            renderNode(cid, depth+1);
-          }
-        }
-      };
-
-      // Render roots
-      for(const rid of ensureArray(snapshot.rootIds)){
-        renderNode(rid, 0);
-      }
-
-      if(!host.childNodes.length){
-        host.appendChild(ui.el('div','tt-empty','Нічого не знайдено'));
-      }
-    }
+  // Ensure selection exists and render immediately
+      if(!ctx2.destJournalId){
+        ctx2.destJournalId = cands[0]?.id ?? null;
+  }
+  renderList();
+}
 
 async function renderPreview(){
       previewHost.innerHTML = '';
-      const template = getTemplateById(localCtx.templateId);
+      const template = getTemplateById(ctx2.templateId);
       if(!template){
         previewHost.appendChild(ui.el('div','', 'Шаблон не обрано'));
-        syncSaveEnabled();
         return;
       }
-      const toJournalId = localCtx.destJournalId;
+      const toJournalId = ctx2.destJournalId;
       if(!toJournalId){
         previewHost.appendChild(ui.el('div','', 'Оберіть журнал призначення'));
-        syncSaveEnabled();
         return;
       }
       const toSheet = sheets.find(s => s.key === toJournalId) || null;
       if(!toSheet){
         previewHost.appendChild(ui.el('div','', 'Цільовий журнал не знайдено'));
-        syncSaveEnabled();
         return;
       }
       const toColKeys = ensureArray(toSheet?.columns).map(c => c.id);
@@ -1078,29 +771,26 @@ async function renderPreview(){
         table.appendChild(valEl);
       }
       previewHost.appendChild(table);
-      syncSaveEnabled();
     }
 
     root.appendChild(cardScenario);
     if(subrowsCard) root.appendChild(subrowsCard);
     root.appendChild(cardTree);
     root.appendChild(cardPreview);
-    setTimeout(()=>{ renderTree(); renderPreview(); syncSaveEnabled(); }, 0);
+    setTimeout(()=>{ renderTree(); renderPreview(); }, 0);
 
-    localCtx.__getSelectedLineIdxs = ()=> computeSelectedLineIdxs(root);
+    // Store selector getter on the *screen ctx* (ctx2), so onSave receives it.
+    ctx2.__getSelectedLineIdxs = ()=> computeSelectedLineIdxs(root);
     return root;
   },
-  // IMPORTANT: SettingsWindow passes its own ctx object into onSave.
-  // For transfer execution we keep state in the closure `localCtx`, so we must
-  // NOT shadow it with a parameter, otherwise nothing happens on Save.
-  onSave: async ()=>{
-    try{
-          const template = getTemplateById(localCtx.templateId);
-          if(!template) return;
-          const selectedLineIdxs = typeof localCtx.__getSelectedLineIdxs === 'function' ? localCtx.__getSelectedLineIdxs() : [1];
-          const scenario = localCtx.scenario || 'existing';
+  onSave: async (ctx2)=>{
 
-          const toId = localCtx.destJournalId;
+          const template = getTemplateById(ctx2.templateId);
+          if(!template) return;
+          const selectedLineIdxs = typeof ctx2.__getSelectedLineIdxs === 'function' ? ctx2.__getSelectedLineIdxs() : [1];
+          const scenario = ctx2.scenario || 'existing';
+
+          const toId = ctx2.destJournalId;
           if(!toId){
             UI.toast?.error?.('Не обрано журнал призначення') ?? console.error('No target journal');
             return;
@@ -1157,7 +847,7 @@ async function renderPreview(){
 
           const labelKey = toColKeys.find(k=>k) ?? null;
           const colLabels = ensureArray(toSheet?.columns).map(c=>c?.name ?? c?.id ?? '');
-          const targetRecordId = await pickTargetRecordIdFull({ journalId: toId, colKeys: toColKeys, colLabels });
+          const targetRecordId = await pickTargetRecordIdFull({ SettingsWindow, journalId: toId, colKeys: toColKeys, colLabels });
           if(!targetRecordId) return;
 
           const dstDataset = await tableStore.getDataset(toId);
@@ -1203,161 +893,36 @@ async function renderPreview(){
           await tableStore.updateRecord(toId, targetRecordId, { cells: nextBaseCells, subrows: nextSubrows });
           UI.toast?.success?.('Копіювання виконано (оновлено існуючу строку у цільовому журналі)') ?? console.log('Transfer applied (existing row)');
           SettingsWindow.close();
-    }catch(e){
-      console.error('Transfer onSave failed', e);
-      UI.toast?.error?.('Помилка перенесення. Деталі в консолі.') ?? console.error(e);
-    }
   }
 }));
       return;
+    };
+
+    const adapter = UI?.swsAdapter ?? global?.SWSAdapter ?? null;
+    if(adapter && typeof adapter.open === 'function'){
+      const adapterOpenResult = adapter.open({
+        screenId: 'transfer.execute',
+        swsOpen: ()=> {
+          if(!SettingsWindow?.openRoot || !SettingsWindow?.openCustomRoot || !SettingsWindow?.push){
+            throw new Error('SettingsWindow SWS API is unavailable for transfer.execute');
+          }
+          return openTransferSws();
+        },
+        legacy: {
+          title: 'Копіювання',
+          contentNode: null,
+          closeOnOverlay: true
+        }
+      });
+      if(adapterOpenResult?.ok) return;
     }
 
-    // Fallback to legacy TransferUI modal
-    const TransferUI = global.TransferUI;
-    if(!TransferUI?.openTransfer){
-      UI.toast?.error?.('TransferUI модалка не завантажена') ?? console.error('TransferUI modals not loaded');
+    if(SettingsWindow?.openRoot){
+      openTransferSws();
       return;
     }
 
-    // Step 0: pick scenario + subrows to copy (if any)
-    const pick = await openScenarioAndSubrowsPicker({ srcRecord });
-    if(!pick) return;
-    const scenario = pick.scenario || 'existing';
-    const selectedLineIdxs = ensureArray(pick.selectedLineIdxs).filter(n=>Number.isFinite(n) && n>0);
-    TransferUI.openTransfer({
-      sheets,
-      templates,
-      sourceSheetKey: sourceJournalId,
-      sourceRow: srcRow,
-      onApply: async ({ template, targetRow }) => {
-        const toId = template?.toSheetKey;
-        if(!toId){
-          UI.toast?.error?.('Не вказано цільовий журнал') ?? console.error('No target journal');
-          return;
-        }
-
-        const toSheet = sheets.find(s => s.key === toId) || sheets[0];
-        const toColKeys = ensureArray(toSheet?.columns).map(c => c.id);
-
-        // Validate destination subrows policy: block if ANY column has subrows disabled (as requested)
-        const dstSettings = await loadTableSettingsForJournal(toId);
-        const disabled = [];
-        const enabledMap = dstSettings?.subrows?.columnsSubrowsEnabled ?? {};
-        for(let i=0;i<toColKeys.length;i++){
-          const k = toColKeys[i];
-          if(!k) continue;
-          if(enabledMap[k] === false){
-            const colName = toSheet?.columns?.[i]?.name ?? k;
-            disabled.push(`${i+1}: ${colName}`);
-          }
-        }
-        if(disabled.length){
-          UI.toast?.error?.(`Копіювання неможливе: підстроки вимкнені у колонках ${disabled.join(', ')}`) ?? console.error('Subrows disabled in target columns', disabled);
-          return;
-        }
-
-        // Base row mapping from UI targetRow
-        const recordBase = core.buildRecordFromRow(toColKeys, targetRow);
-
-        // Build mapped lines (line #1 is base row, lines #2.. are subrows)
-        const includeBase = selectedLineIdxs.includes(1);
-        const srcSubrows = ensureArray(srcRecord?.subrows);
-
-        const mappedLines = [];
-        // line 1 (base)
-        if(includeBase){
-          mappedLines.push({ cells: { ...(recordBase?.cells ?? {}) } });
-        }
-
-        // lines 2..N+1 (subrows)
-        for(const lineIdx of selectedLineIdxs){
-          if(lineIdx <= 1) continue;
-          const srcSub = srcSubrows[lineIdx-2]; // line2 -> subrows[0]
-          if(!srcSub) continue;
-          const srcSubRow = rowArrayFromCells(srcSub?.cells ?? {}, fromColKeys);
-          const tgtSubRow = core.applyTemplateToRow(template, srcSubRow, { sourceColKeys: fromColKeys, targetColKeys: toColKeys });
-          const subRec = core.buildRecordFromRow(toColKeys, tgtSubRow);
-          mappedLines.push({ cells: { ...(subRec?.cells ?? {}) } });
-        }
-        if(scenario === 'new'){
-          // Scenario 2: copy into a NEW row in destination
-          const baseCells = includeBase ? (recordBase?.cells ?? {}) : {};
-          const subLines = includeBase ? mappedLines.slice(1) : mappedLines.slice(0);
-          const recordPartial = { ...recordBase, cells: baseCells, subrows: subLines.map(l=>({ cells: { ...(l?.cells ?? {}) } })) };
-          await tableStore.addRecord(toId, recordPartial);
-          UI.toast?.success?.('Копіювання виконано (створено нову строку у цільовому журналі)') ?? console.log('Transfer applied (new row)');
-          return;
-        }
-
-        // Scenario 1: copy into an EXISTING row in destination (select target record)
-        const labelKey = toColKeys.find(k=>k) ?? null;
-        const targetRecordId = await pickTargetRecordId({ journalId: toId, labelColKey: labelKey });
-        if(!targetRecordId) return;
-
-        const dstDataset = await tableStore.getDataset(toId);
-        const dstRecord = ensureArray(dstDataset?.records).find(r=>r?.id === targetRecordId);
-        if(!dstRecord){
-          UI.toast?.warning?.('Цільова строка не знайдена') ?? console.warn('Target record not found');
-          return;
-        }
-
-        // Determine global max filled LINE index (1=base, 2..=subrows) across ALL columns
-        const existingSubrows = ensureArray(dstRecord?.subrows);
-        const totalLines = 1 + existingSubrows.length;
-
-        let globalMaxLine = 0;
-        for(const colKey of toColKeys){
-          if(!colKey) continue;
-          let maxForCol = 0;
-
-          // base line (1)
-          const baseVal = dstRecord?.cells?.[colKey];
-          if(isFilled(baseVal)) maxForCol = 1;
-
-          // subrows lines (2..)
-          for(let i=0;i<existingSubrows.length;i++){
-            const v = existingSubrows[i]?.cells?.[colKey];
-            if(isFilled(v)) maxForCol = Math.max(maxForCol, i+2); // line index
-          }
-
-          if(maxForCol > globalMaxLine) globalMaxLine = maxForCol;
-        }
-
-        const copyLines = mappedLines; // each is {cells}
-        const K = copyLines.length;
-
-        const neededLastLine = globalMaxLine + K;
-        const neededSubrowsLen = Math.max(0, neededLastLine - 1);
-
-        // clone existing subrows
-        const nextSubrows = existingSubrows.map(s=>({ cells: { ...(s?.cells ?? {}) } }));
-        while(nextSubrows.length < neededSubrowsLen) nextSubrows.push({ cells: {} });
-
-        // clone base cells (we patch only if a copied line writes into base)
-        const nextBaseCells = { ...(dstRecord?.cells ?? {}) };
-
-        // Apply copied lines starting at (globalMaxLine + 1)
-        for(let i=0;i<K;i++){
-          const dstLine = globalMaxLine + 1 + i; // 1-based line
-          const patchCells = copyLines[i]?.cells ?? {};
-          if(dstLine <= 1){
-            // write into base
-            for(const k of Object.keys(patchCells)) nextBaseCells[k] = patchCells[k];
-          }else{
-            const si = dstLine - 2; // subrows index
-            const cur = nextSubrows[si] || { cells:{} };
-            nextSubrows[si] = { ...cur, cells: { ...(cur?.cells ?? {}), ...patchCells } };
-          }
-        }
-
-        await tableStore.updateRecord(toId, targetRecordId, {
-          cells: nextBaseCells,
-          subrows: nextSubrows
-        });
-
-        UI.toast?.success?.('Копіювання виконано (оновлено існуючу строку у цільовому журналі)') ?? console.log('Transfer applied (existing row)');
-}
-    });
+    UI.toast?.error?.('Transfer SWS недоступний: потрібен SettingsWindow') ?? console.error('Transfer SWS unavailable');
   }
 
   UI.transfer = { openSettings, openRowModal };
