@@ -9,6 +9,7 @@
  * - ctx.api.tableStore exists (from table_store module)
  */
 import { createTransferCore } from '../core/transfer_core.js';
+import { computeTreeNumbering } from '../core/numbering_core.js';
 
 function uniqPush(arr, v){ if(v==null) return; if(!arr.includes(v)) arr.push(v); }
 function ensureArray(x){ return Array.isArray(x) ? x : []; }
@@ -510,6 +511,7 @@ export function attachTransferUI(ctx){
         templates: applicable,
         templateId: applicable[0]?.id || null,
         scenario: 'existing', // 'existing' | 'new'
+        destSpaceId: null,
         destJournalId: null
       };
 
@@ -519,28 +521,67 @@ export function attachTransferUI(ctx){
 const resolveDestCandidates = (tpl)=>{
   const toKey = tpl?.toSheetKey;
   if(!toKey) return [];
+
+  // Index journal meta from state (spaceId, parentId, index)
+  const metaById = {};
+  for(const j of ensureArray(stateNow.journals)){
+    const jid = j?.id ?? j?.key;
+    if(!jid) continue;
+    metaById[jid] = {
+      id: jid,
+      title: j?.title ?? j?.name ?? jid,
+      spaceId: j?.spaceId ?? null,
+      parentId: j?.parentId ?? null,
+      templateId: j?.templateId ?? j?.tplId ?? null,
+      index: (typeof j?.index === 'number' ? j.index : null),
+    };
+  }
+
   const uniq = new Map();
-  // direct journal match
+  const add = (jid, base={})=>{
+    if(!jid) return;
+    const m = metaById[jid] || {};
+    const prev = uniq.get(jid) || {};
+    uniq.set(jid, {
+      id: jid,
+      title: base.title ?? prev.title ?? m.title ?? jid,
+      spaceId: base.spaceId ?? prev.spaceId ?? m.spaceId ?? null,
+      parentId: base.parentId ?? prev.parentId ?? m.parentId ?? null,
+      templateId: base.templateId ?? prev.templateId ?? m.templateId ?? null,
+      index: (base.index ?? prev.index ?? m.index ?? null)
+    });
+  };
+
+  // direct journal match by id
   for(const s of ensureArray(sheets)){
     if(s?.key === toKey){
-      uniq.set(s.key, { id: s.key, title: s.name ?? s.key });
+      add(s.key, { title: s.name ?? s.key, templateId: s.tplId ?? null });
     }
   }
+
   // templateId match via state journals
   for(const j of ensureArray(stateNow.journals)){
     const jid = j?.id ?? j?.key;
     if(!jid) continue;
     const tplId = j?.templateId ?? j?.tplId ?? null;
     if(tplId && tplId === toKey){
-      uniq.set(jid, { id: jid, title: j?.title ?? j?.name ?? jid });
+      add(jid, {
+        title: j?.title ?? j?.name ?? jid,
+        spaceId: j?.spaceId ?? null,
+        parentId: j?.parentId ?? null,
+        templateId: tplId,
+        index: (typeof j?.index === 'number' ? j.index : null)
+      });
     }
   }
-  // templateId match via sheets view
+
+  // templateId match via sheets view (fallback)
   for(const s of ensureArray(sheets)){
     if(s?.tplId && s.tplId === toKey){
-      uniq.set(s.key, { id: s.key, title: s.name ?? s.key });
+      add(s.key, { title: s.name ?? s.key, templateId: s.tplId });
     }
   }
+
   return Array.from(uniq.values());
 };
 
@@ -555,7 +596,22 @@ const ensureDest = (ctxObj)=>{
   if(ctxObj?.destJournalId && cands.length && !cands.some(j => j.id === ctxObj.destJournalId)){
     if(ctxObj) ctxObj.destJournalId = cands[0]?.id ?? null;
   }
-  return cands;
+
+  const candsInSpace = cands.filter(c => (c?.spaceId ?? null) === (ctxObj?.destSpaceId ?? null));
+
+  if(candsInSpace.length === 0){
+    // selected space is an ancestor path or empty; journal must be chosen by selecting a space that contains candidates
+    ctxObj.destJournalId = null;
+  } else {
+    if(!ctxObj?.destJournalId){
+      ctxObj.destJournalId = candsInSpace[0]?.id ?? null;
+    }
+    if(ctxObj?.destJournalId && !candsInSpace.some(j => j.id === ctxObj.destJournalId)){
+      ctxObj.destJournalId = candsInSpace[0]?.id ?? null;
+    }
+  }
+
+  return { tpl, cands, candsInSpace, spacesSnap };
 };
 
 // NOTE:
@@ -639,11 +695,11 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
       children: [previewHost]
     });
 
-    // Card (placeholder): simplified navigation tree for destination journals
+    // Card: destination picker (2 panes: Spaces + Journals) filtered by route destination template
     const treeHost = ui.el('div','');
     const cardTree = ui.card({
       title: 'Журнал призначення',
-      description: 'Оберіть журнал призначення (спрощений список)',
+      description: 'Оберіть простір (ліворуч) та журнал (праворуч). Показуються лише простори/журнали, що відповідають шаблону призначення маршруту.',
       children: [treeHost]
     });
 
@@ -732,7 +788,8 @@ SettingsWindow.openCustomRoot(()=> SettingsWindow.push({
   renderList();
 }
 
-async function renderPreview(){
+
+    async function renderPreview(){
       previewHost.innerHTML = '';
       const template = getTemplateById(ctx2.templateId);
       if(!template){

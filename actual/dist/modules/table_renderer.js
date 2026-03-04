@@ -1,5 +1,7 @@
 import { createTableEngine } from './table_engine.js';
 import { formatCell as defaultFormatCell, parseInput as defaultParseInput } from './table_formatter.js';
+import { runDatasetTx } from "../table/core/dataset_tx/feature.js";
+import { pushTableEvent } from "../table/core/event_log.js";
 
 function cellKey(rowId, colKey) {
   return `${rowId}:${colKey}`;
@@ -27,10 +29,35 @@ function normalizeDataset(input = {}) {
 }
 
 function updateDatasetWithPatch(dataset, patch) {
+  const kind = patch?.type || null;
+
+  // Current renderer fallback uses a compact cell-patch shape:
+  //   { type:'cell', rowId, colKey, value }
+  if (kind === 'cell') {
+    const rid = patch.rowId ?? patch.recordId;
+    const colKey = patch.colKey;
+    if (!rid || !colKey) return dataset;
+    return {
+      ...dataset,
+      records: (dataset.records ?? []).map((record) => {
+        if (String(record.id) !== String(rid)) return record;
+        return {
+          ...record,
+          cells: { ...(record.cells ?? {}), [colKey]: patch.value }
+        };
+      })
+    };
+  }
+
+  // Legacy patch shape (kept for compatibility):
+  //   { recordId, cellsPatch, fmtPatch }
+  const recordId = patch?.recordId;
+  if (!recordId) return dataset;
+
   return {
     ...dataset,
-    records: dataset.records.map((record) => {
-      if (record.id !== patch.recordId) return record;
+    records: (dataset.records ?? []).map((record) => {
+      if (String(record.id) !== String(recordId)) return record;
       return {
         ...record,
         cells: { ...(record.cells ?? {}), ...(patch.cellsPatch ?? {}) },
@@ -428,6 +455,21 @@ export function createTableRendererModule(opts = {}) {
       return;
     }
     console.error('[table_renderer] tableStore/journalId missing: refusing to persist dataset to fallback key');
+  }
+
+  async function runDatasetTxWithRuntime(runtime, journalId, { initiator, reason }, mutate) {
+    return runDatasetTx({
+      ctx: { journalId },
+      initiator,
+      reason,
+      deps: {
+        runtime,
+        store: runtime?.storage,
+        loadDataset: (rt, st, jid) => loadDataset(rt, st, jid),
+        saveDataset: (rt, st, jid, ds) => saveDataset(rt, st, jid, ds),
+      },
+      mutate,
+    });
   }
 
   function rerender(mount, runtime, renderFn) {
@@ -1161,17 +1203,37 @@ if (rowLineCount > 1) td.classList.add('sdo-cell-has-subrows');
     try {
       // Update engine/model (kept for validation/transfer consistency)
       engine.applyEdit(editRowId, cell.colKey, parsed.v);
-
       // Persist only the changed record (tableStore is source of truth)
       const store = runtime?.api?.tableStore || runtime?.sdo?.api?.tableStore;
-      if (store?.updateRecord) {
-        await store.updateRecord(currentJournalId, editRowId, { cells: { [cell.colKey]: parsed.v } });
-      } else {
-        // Fallback to legacy full-dataset save path
-        const dsNow = await loadDataset(runtime, runtime.storage, currentJournalId);
-        const patch = { type: 'cell', rowId: editRowId, colKey: cell.colKey, value: parsed.v };
-        const nextDataset = updateDatasetWithPatch(dsNow, patch);
-        await saveDataset(runtime, runtime.storage, currentJournalId, nextDataset);
+
+      const __baseEvent = {
+        type: 'editCell',
+        initiator: 'ui.editCell',
+        reason: 'editCell',
+        journalId: currentJournalId,
+        details: { rowId: editRowId, colKey: cell.colKey, isSubrow: !!pSub }
+      };
+      pushTableEvent({ ...__baseEvent, phase: 'start', ok: null });
+      let __persistOk = false;
+      try {
+        if (store?.updateRecord) {
+          await store.updateRecord(currentJournalId, editRowId, { cells: { [cell.colKey]: parsed.v } });
+        } else {
+          // Fallback to full-dataset save path (instrumented via datasetTx)
+          const patch = { type: 'cell', rowId: editRowId, colKey: cell.colKey, value: parsed.v };
+          const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.editCell.fallback', reason: 'editCell' }, async (ds) => {
+            const nextDataset = updateDatasetWithPatch(ds, patch);
+            return { ok: true, nextDataset, meta: { rowId: editRowId, colKey: cell.colKey } };
+          });
+          if (!tx.ok) throw new Error('editCell fallback tx failed');
+          try {
+            runtime.__datasetCache = runtime.__datasetCache || {};
+            runtime.__datasetCache[currentJournalId] = tx.nextDataset;
+          } catch {}
+        }
+        __persistOk = true;
+      } finally {
+        pushTableEvent({ ...__baseEvent, phase: 'done', ok: __persistOk });
       }
 
       
@@ -1309,8 +1371,6 @@ if (rowLineCount > 1) td.classList.add('sdo-cell-has-subrows');
             try {
               // IMPORTANT: delete must update the SAME source that refreshTable() reads.
               // Therefore we persist via saveDataset() (which matches loadDataset()).
-              const dsNow2 = await loadDataset(runtime, runtime.storage, currentJournalId);
-
               const removeRowCascade = (ds, rootId) => {
                 const records = Array.isArray(ds?.records) ? ds.records : [];
                 const byId = new Map(records.map((r) => [String(r.id), r]));
@@ -1335,11 +1395,17 @@ if (rowLineCount > 1) td.classList.add('sdo-cell-has-subrows');
                 return { ...ds, records: nextRecords, merges: nextMerges };
               };
 
-              const nextDataset2 = removeRowCascade(dsNow2, rid);
-              await saveDataset(runtime, runtime.storage, currentJournalId, nextDataset2);
+              const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.rowActions.deleteRow', reason: 'deleteRow' }, async (ds) => {
+                const nextDataset2 = removeRowCascade(ds, rid);
+                return { ok: true, nextDataset: nextDataset2, meta: { ownerRowId: rid } };
+              });
+              if (!tx.ok) {
+                window.UI?.toast?.show?.('Не вдалося видалити строку');
+                return;
+              }
 
               runtime.__datasetCache = runtime.__datasetCache || Object.create(null);
-               runtime.__datasetCache[currentJournalId] = nextDataset2;
+               runtime.__datasetCache[currentJournalId] = tx.nextDataset;
                await requestTableRerender({ reason: 'deleteRow', journalId: currentJournalId, rowId: rid });
             } catch (e) {
               console.error('Delete row failed', e);
@@ -1372,7 +1438,6 @@ if (rowLineCount > 1) td.classList.add('sdo-cell-has-subrows');
             try {
               // UX model: №1 is the parent row.
               if (n === 1) {
-                const dsNowP = await loadDataset(runtime, runtime.storage, currentJournalId);
                 const removeRowCascade = (ds, rootId) => {
                   const records = Array.isArray(ds?.records) ? ds.records : [];
                   const byId = new Map(records.map((r) => [String(r.id), r]));
@@ -1396,30 +1461,41 @@ if (rowLineCount > 1) td.classList.add('sdo-cell-has-subrows');
                   const nextMerges = Array.isArray(ds?.merges) ? ds.merges.filter((m) => !toDelete.has(String(m.rowId))) : ds?.merges;
                   return { ...ds, records: nextRecords, merges: nextMerges };
                 };
-                const nextDatasetP = removeRowCascade(dsNowP, ownerRowId);
-                await saveDataset(runtime, runtime.storage, currentJournalId, nextDatasetP);
+                const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.rowActions.deleteRow.subIndex1', reason: 'deleteRow' }, async (ds) => {
+                  const nextDatasetP = removeRowCascade(ds, ownerRowId);
+                  return { ok: true, nextDataset: nextDatasetP, meta: { ownerRowId } };
+                });
+                if (!tx.ok) {
+                  window.UI?.toast?.show?.('Не вдалося видалити строку');
+                  return;
+                }
                 runtime.__datasetCache = runtime.__datasetCache || Object.create(null);
-                 runtime.__datasetCache[currentJournalId] = nextDatasetP;
+                 runtime.__datasetCache[currentJournalId] = tx.nextDataset;
                  await requestTableRerender({ reason: 'deleteRow', journalId: currentJournalId, rowId: ownerRowId });
                 return;
               }
 
-              const dsNow2 = await loadDataset(runtime, runtime.storage, currentJournalId);
-              engine.setDataset(dsNow2);
+              // datasetTx will load dataset; keep engine in sync inside mutate
+
               // Human numbering: 1 = parent row, 2 = first subrow => index 0
               const subrowId = `${ownerRowId}::sub::${n - 2}`;
-              const { dataset: nextDataset2, removed } = engine.removeSubrow(subrowId, dsNow2);
-              if (!removed) {
-                // We already closed modal; just log and refresh
-                console.warn('Subrow not removed', { subrowId });
-                 await requestTableRerender({ reason: 'deleteSubrow:notRemoved', journalId: currentJournalId, rowId: ownerRowId, subIndex: (n-2) });
-                 return;
+              const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.rowActions.deleteSubrow', reason: 'deleteSubrow' }, async (ds) => {
+                engine.setDataset(ds);
+                const { dataset: nextDataset2, removed } = engine.removeSubrow(subrowId, ds);
+                if (!removed) return { ok: false, nextDataset: ds, meta: { removed: false, subrowId } };
+                return { ok: true, nextDataset: nextDataset2, meta: { removed: true, subrowId, subIndex: (n - 2) } };
+              });
+              if (!tx.ok) {
+                // Modal already closed; show toast and refresh
+                window.UI?.toast?.show?.('Не вдалося видалити підстрочку');
+                console.warn('Delete subrow tx not ok', tx);
+                await requestTableRerender({ reason: 'deleteSubrow:txNotOk', journalId: currentJournalId, rowId: ownerRowId, subIndex: (n - 2) });
+                return;
               }
-              await saveDataset(runtime, runtime.storage, currentJournalId, nextDataset2);
               runtime.__datasetCache = runtime.__datasetCache || Object.create(null);
-               runtime.__datasetCache[currentJournalId] = nextDataset2;
-               await requestTableRerender({ reason: 'deleteSubrow', journalId: currentJournalId, rowId: ownerRowId, subIndex: (n-2) });
-            } catch (e) {
+              runtime.__datasetCache[currentJournalId] = tx.nextDataset;
+              await requestTableRerender({ reason: 'deleteSubrow', journalId: currentJournalId, rowId: ownerRowId, subIndex: (n - 2) });
+              } catch (e) {
               console.error('Delete subrow failed', e);
               try { await requestTableRerender({ reason: 'delete:catch', journalId: currentJournalId }); } catch {}
             }
@@ -1450,19 +1526,24 @@ if (rowLineCount > 1) td.classList.add('sdo-cell-has-subrows');
             // Close modal immediately for UX
             SW.close();
             try {
-              const dsNow = await loadDataset(runtime, runtime.storage, currentJournalId);
-              engine.setDataset(dsNow);
-              const initCells = {};
-              for (const c of view.columns) {
-                const k = c.columnKey;
-                const enabled = settings?.subrows?.columnsSubrowsEnabled?.[k] !== false;
-                if (enabled) initCells[k] = '';
+              const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.rowActions.addSubrow', reason: 'addSubrow' }, async (ds) => {
+                engine.setDataset(ds);
+                const initCells = {};
+                for (const c of view.columns) {
+                  const k = c.columnKey;
+                  const enabled = settings?.subrows?.columnsSubrowsEnabled?.[k] !== false;
+                  if (enabled) initCells[k] = '';
+                }
+                const { dataset: nextDataset } = engine.addSubrow(ownerRowId, { cells: initCells }, ds);
+                return { ok: true, nextDataset, meta: { ownerRowId } };
+              });
+              if (!tx.ok) {
+                window.UI?.toast?.show?.('Не вдалося додати підстроку');
+                return;
               }
-              const { dataset: nextDataset } = engine.addSubrow(ownerRowId, { cells: initCells }, dsNow);
-              await saveDataset(runtime, runtime.storage, currentJournalId, nextDataset);
-      // Sync cache so rerender reflects added subrow immediately
-      try { runtime.__datasetCache = runtime.__datasetCache || {}; runtime.__datasetCache[currentJournalId] = nextDataset; } catch {}
-      engine.recompute?.(); await requestTableRerender({ reason: 'addSubrow', journalId: currentJournalId, rowId: row.rowId });
+              // Sync cache so rerender reflects added subrow immediately
+              try { runtime.__datasetCache = runtime.__datasetCache || {}; runtime.__datasetCache[currentJournalId] = tx.nextDataset; } catch {}
+              engine.recompute?.(); await requestTableRerender({ reason: 'addSubrow', journalId: currentJournalId, rowId: ownerRowId });
             } catch (e) {
               console.error('Add subrow failed', e);
               try { await requestTableRerender({ reason: 'delete:catch', journalId: currentJournalId }); } catch {}
@@ -1694,21 +1775,23 @@ const requestTableRerender = async (info = {}) => {
                   const parsed = defaultParseInput(raw, field);
                   typed[field.key] = parsed.v;
                 }
-
-                const currentDataset = await loadDataset(runtime, runtime.storage, currentJournalId);
-                const addResult = engine.addRow(typed, currentDataset);
-                if (!addResult.ok) {
+                const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.addRow', reason: 'addRow' }, async (ds) => {
+                  const addResult = engine.addRow(typed, ds);
+                  if (!addResult?.ok) return { ok: false, nextDataset: ds, meta: { error: 'addRow failed' } };
+                  return { ok: true, nextDataset: addResult.dataset, meta: { rowId: addResult?.rowId || addResult?.id || null } };
+                });
+                if (!tx.ok) {
                   window.UI?.toast?.show?.('Не вдалося додати запис');
                   return;
                 }
-                await saveDataset(runtime, runtime.storage, currentJournalId, addResult.dataset);
 
                 try {
-                  if (runtime.__datasetCache && addResult?.dataset) runtime.__datasetCache[currentJournalId] = addResult.dataset;
+                  runtime.__datasetCache = runtime.__datasetCache || {};
+                  runtime.__datasetCache[currentJournalId] = tx.nextDataset;
                 } catch {}
 
                 engine.recompute?.();
-                await requestTableRerender({ reason: 'addRow', journalId: currentJournalId, rowId: addResult?.rowId || addResult?.id || null });
+                await requestTableRerender({ reason: 'addRow', journalId: currentJournalId, rowId: tx?.meta?.rowId ?? null });
                 __submitOk = true;
 
                 try { sws.close(); } catch {}
@@ -1800,13 +1883,19 @@ const requestTableRerender = async (info = {}) => {
             try { window.UI?.toast?.show?.('Невірний формат даних'); } catch {}
             return;
           }
-          const currentDataset = await loadDataset(runtime, runtime.storage, currentJournalId);
-          const addResult = engine.addRow({ [first?.key ?? 'title']: parsed.v }, currentDataset);
-          if (!addResult.ok) {
+          const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.addRow.prompt', reason: 'addRow' }, async (ds) => {
+            const addResult = engine.addRow({ [first?.key ?? 'title']: parsed.v }, ds);
+            if (!addResult?.ok) return { ok: false, nextDataset: ds, meta: { error: 'addRow failed' } };
+            return { ok: true, nextDataset: addResult.dataset, meta: { rowId: addResult?.rowId || addResult?.id || null } };
+          });
+          if (!tx.ok) {
             window.UI?.toast?.show?.('Не вдалося додати запис');
             return;
           }
-          await saveDataset(runtime, runtime.storage, currentJournalId, addResult.dataset);
+          try {
+            runtime.__datasetCache = runtime.__datasetCache || {};
+            runtime.__datasetCache[currentJournalId] = tx.nextDataset;
+          } catch {}
           engine.recompute?.(); await requestRefresh();
         }
 
@@ -1830,9 +1919,18 @@ const requestTableRerender = async (info = {}) => {
 
             let modalId;
             const onSubmit = async (values) => {
-              const currentDataset = await loadDataset(runtime, runtime.storage, currentJournalId);
-              const res = engine.addSubrow(ownerRowId, { insertAfterId, cells: values }, currentDataset);
-              await saveDataset(runtime, runtime.storage, currentJournalId, res.dataset);
+              const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.addSubrow', reason: 'addSubrow' }, async (ds) => {
+                const res = engine.addSubrow(ownerRowId, { insertAfterId, cells: values }, ds);
+                return { ok: true, nextDataset: res.dataset, meta: { ownerRowId, insertAfterId: insertAfterId ?? null } };
+              });
+              if (!tx.ok) {
+                window.UI?.toast?.show?.('Не вдалося додати підстроку');
+                return;
+              }
+              try {
+                runtime.__datasetCache = runtime.__datasetCache || {};
+                runtime.__datasetCache[currentJournalId] = tx.nextDataset;
+              } catch {}
               window.UI.modal.close(modalId);
               engine.recompute?.(); await requestRefresh();
             };
@@ -1888,10 +1986,18 @@ const requestTableRerender = async (info = {}) => {
             });
             return;
           }
-
-          const currentDataset = await loadDataset(runtime, runtime.storage, currentJournalId);
-          const res = engine.addSubrow(ownerRowId, { insertAfterId, cells: {} }, currentDataset);
-          await saveDataset(runtime, runtime.storage, currentJournalId, res.dataset);
+          const tx = await runDatasetTxWithRuntime(runtime, currentJournalId, { initiator: 'ui.addSubrow.fallback', reason: 'addSubrow' }, async (ds) => {
+            const res = engine.addSubrow(ownerRowId, { insertAfterId, cells: {} }, ds);
+            return { ok: true, nextDataset: res.dataset, meta: { ownerRowId, insertAfterId: insertAfterId ?? null } };
+          });
+          if (!tx.ok) {
+            window.UI?.toast?.show?.('Не вдалося додати підстроку');
+            return;
+          }
+          try {
+            runtime.__datasetCache = runtime.__datasetCache || {};
+            runtime.__datasetCache[currentJournalId] = tx.nextDataset;
+          } catch {}
           engine.recompute?.(); await requestRefresh();
         }
 
