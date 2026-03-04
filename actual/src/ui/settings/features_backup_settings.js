@@ -35,8 +35,34 @@
     ];
   }
 
+
+
+  function openViaAdapterOrLegacy(payload) {
+    const adapter = UI?.swsAdapter ?? global?.SWSAdapter ?? null;
+    const legacy = {
+      title: 'Backup Import',
+      contentNode: payload,
+      closeOnOverlay: true
+    };
+
+    if (adapter && typeof adapter.open === 'function') {
+      const out = adapter.open({
+        screenId: 'backup.import',
+        sws: {
+          title: 'Backup Import',
+          content: payload
+        },
+        legacy
+      });
+      if (out?.ok) return out;
+    }
+
+    if (UI?.modal?.open) return UI.modal.open(legacy);
+    return null;
+  }
+
   function openImportResultModal({ fileName, parsed, ok }) {
-    if (!UI?.modal?.open || typeof document === 'undefined') return;
+    if (typeof document === 'undefined') return;
 
     const content = document.createElement('div');
     content.className = 'ui-modal-content sdo-backup-import-modal';
@@ -75,7 +101,7 @@
     jsonDetails.append(summary, pre);
 
     content.append(title, fileInfo, table, jsonDetails);
-    UI.modal.open({ title: 'Backup Import', contentNode: content, closeOnOverlay: true });
+    openViaAdapterOrLegacy(content);
   }
 
   function createBackupSettingsFeature() {

@@ -253,55 +253,78 @@ export function attachTransferUI(ctx){
 
   // Full-view (table-like) picker: user selects a row by DOUBLE CLICK.
   // This is a lightweight approximation of "full journal view" until we embed the real renderer.
-  async function pickTargetRecordIdFull({ journalId, colKeys, colLabels }){
+  async function pickTargetRecordIdFull({ SettingsWindow, journalId, colKeys, colLabels }){
     const ds = await tableStore.getDataset(journalId);
     const records = ensureArray(ds?.records);
-    const wrap = createEl('div', { style:'display:flex;flex-direction:column;gap:10px;min-width:680px;max-width:960px;max-height:70vh;' });
-    wrap.appendChild(createEl('div', { style:'font-weight:700;' }, 'Оберіть строку (подвійний клік)'));
 
-    const table = createEl('div', { style:'border:1px solid rgba(0,0,0,.12);border-radius:10px;overflow:auto;flex:1;background:#fff;' });
-    const grid = createEl('div', { style:`display:grid;grid-template-columns:${ensureArray(colKeys).map(()=> 'minmax(140px,1fr)').join(' ')};gap:0;border-collapse:collapse;` });
-
-    // header
-    for(let i=0;i<colKeys.length;i++){
-      const th = createEl('div', { style:'position:sticky;top:0;background:rgba(0,0,0,.04);padding:8px 10px;font-weight:600;border-bottom:1px solid rgba(0,0,0,.12);' }, colLabels?.[i] ?? colKeys[i]);
-      grid.appendChild(th);
+    if(!SettingsWindow?.push || !SettingsWindow?.pop){
+      return records?.[0]?.id ?? null;
     }
-    // rows
-    for(const r of records){
-      for(let i=0;i<colKeys.length;i++){
-        const k = colKeys[i];
-        const v = r?.cells?.[k];
-        const td = createEl('div', { style:'padding:8px 10px;border-bottom:1px solid rgba(0,0,0,.06);border-right:1px solid rgba(0,0,0,.04);white-space:pre-wrap;cursor:default;', 'data-id': r.id }, String(v ?? ''));
-        // store record id for dblclick
-        td.ondblclick = ()=>{}; // will be overridden by container handler
-        grid.appendChild(td);
-      }
-    }
-    table.appendChild(grid);
-    wrap.appendChild(table);
-
-    wrap.appendChild(createEl('div', { style:'display:flex;justify-content:flex-end;gap:10px;' }, [
-      createEl('button', { type:'button', 'data-act':'cancel' }, 'Скасувати')
-    ]));
 
     return await new Promise((resolve)=>{
-      let modalRec=null;
-      const close=()=>{ try{ modalRec?.close?.(); }catch{} };
-      wrap.addEventListener('click',(e)=>{
-        const btn=e.target.closest('button');
-        if(!btn) return;
-        const act=btn.getAttribute('data-act');
-        if(act==='cancel'){ close(); resolve(null); }
-      });
-      wrap.addEventListener('dblclick',(e)=>{
-        const cell = e.target.closest('[data-id]');
-        const id = cell?.getAttribute?.('data-id');
-        if(id){ close(); resolve(id); }
-      });
+      let settled = false;
+      const done = (id)=>{
+        if(settled) return;
+        settled = true;
+        try{ SettingsWindow.pop(); }catch(_){ }
+        resolve(id ?? null);
+      };
 
-      modalRec = UI.modal?.open ? UI.modal.open({ title:'Вибір строки', contentNode: wrap }) : null;
-      if(!modalRec) resolve(records?.[0]?.id ?? null);
+      SettingsWindow.push({
+        title: 'Вибір строки',
+        subtitle: 'Оберіть строку призначення',
+        saveLabel: 'OK',
+        canSave: ()=> false,
+        content: (ctx)=>{
+          const ui = ctx.ui;
+          const wrap = ui.el('div','');
+          wrap.style.display='flex';
+          wrap.style.flexDirection='column';
+          wrap.style.gap='8px';
+
+          const search = document.createElement('input');
+          search.type = 'search';
+          search.placeholder = 'Пошук по строках…';
+          search.className = 'sws-input';
+
+          const list = ui.el('div','');
+          list.style.display='flex';
+          list.style.flexDirection='column';
+          list.style.gap='6px';
+          list.style.maxHeight='58vh';
+          list.style.overflow='auto';
+
+          const labels = ensureArray(colLabels).length ? colLabels : ensureArray(colKeys);
+          const rowText = (r)=> ensureArray(colKeys).map((k, i)=> `${labels[i] ?? k}: ${String(r?.cells?.[k] ?? '')}`).join(' | ');
+
+          const render = ()=>{
+            list.innerHTML='';
+            const q = String(search.value || '').trim().toLowerCase();
+            const rows = records.filter((r)=> !q || rowText(r).toLowerCase().includes(q));
+            if(!rows.length){
+              list.appendChild(ui.el('div','sws-muted','Нічого не знайдено'));
+              return;
+            }
+            for(const r of rows){
+              const btn = ui.el('button','sws-qnav-btn', rowText(r));
+              btn.type = 'button';
+              btn.style.textAlign='left';
+              btn.onclick = ()=> done(r?.id ?? null);
+              list.appendChild(btn);
+            }
+          };
+
+          const cancelBtn = ui.el('button','sws-btn','Скасувати');
+          cancelBtn.onclick = ()=> done(null);
+
+          search.addEventListener('input', render);
+          wrap.appendChild(search);
+          wrap.appendChild(list);
+          wrap.appendChild(cancelBtn);
+          render();
+          return wrap;
+        }
+      });
     });
   }
 
@@ -469,7 +492,7 @@ export function attachTransferUI(ctx){
     const srcRow = rowArrayFromRecord(srcRecord, fromColKeys);
 
     // New Transfer Execute window (SettingsWindow v2 style)
-    if(SettingsWindow?.openRoot){
+    const openTransferSws = ()=>{
       // Filter templates by SOURCE JOURNAL TEMPLATE (preferred) or by SOURCE JOURNAL ID (legacy)
       const applicable = ensureArray(templates).filter(tpl => {
         const k = tpl?.fromSheetKey;
@@ -824,7 +847,7 @@ async function renderPreview(){
 
           const labelKey = toColKeys.find(k=>k) ?? null;
           const colLabels = ensureArray(toSheet?.columns).map(c=>c?.name ?? c?.id ?? '');
-          const targetRecordId = await pickTargetRecordIdFull({ journalId: toId, colKeys: toColKeys, colLabels });
+          const targetRecordId = await pickTargetRecordIdFull({ SettingsWindow, journalId: toId, colKeys: toColKeys, colLabels });
           if(!targetRecordId) return;
 
           const dstDataset = await tableStore.getDataset(toId);
@@ -873,154 +896,33 @@ async function renderPreview(){
   }
 }));
       return;
+    };
+
+    const adapter = UI?.swsAdapter ?? global?.SWSAdapter ?? null;
+    if(adapter && typeof adapter.open === 'function'){
+      const adapterOpenResult = adapter.open({
+        screenId: 'transfer.execute',
+        swsOpen: ()=> {
+          if(!SettingsWindow?.openRoot || !SettingsWindow?.openCustomRoot || !SettingsWindow?.push){
+            throw new Error('SettingsWindow SWS API is unavailable for transfer.execute');
+          }
+          return openTransferSws();
+        },
+        legacy: {
+          title: 'Копіювання',
+          contentNode: null,
+          closeOnOverlay: true
+        }
+      });
+      if(adapterOpenResult?.ok) return;
     }
 
-    // Fallback to legacy TransferUI modal
-    const TransferUI = global.TransferUI;
-    if(!TransferUI?.openTransfer){
-      UI.toast?.error?.('TransferUI модалка не завантажена') ?? console.error('TransferUI modals not loaded');
+    if(SettingsWindow?.openRoot){
+      openTransferSws();
       return;
     }
 
-    // Step 0: pick scenario + subrows to copy (if any)
-    const pick = await openScenarioAndSubrowsPicker({ srcRecord });
-    if(!pick) return;
-    const scenario = pick.scenario || 'existing';
-    const selectedLineIdxs = ensureArray(pick.selectedLineIdxs).filter(n=>Number.isFinite(n) && n>0);
-    TransferUI.openTransfer({
-      sheets,
-      templates,
-      sourceSheetKey: sourceJournalId,
-      sourceRow: srcRow,
-      onApply: async ({ template, targetRow }) => {
-        const toId = template?.toSheetKey;
-        if(!toId){
-          UI.toast?.error?.('Не вказано цільовий журнал') ?? console.error('No target journal');
-          return;
-        }
-
-        const toSheet = sheets.find(s => s.key === toId) || sheets[0];
-        const toColKeys = ensureArray(toSheet?.columns).map(c => c.id);
-
-        // Validate destination subrows policy: block if ANY column has subrows disabled (as requested)
-        const dstSettings = await loadTableSettingsForJournal(toId);
-        const disabled = [];
-        const enabledMap = dstSettings?.subrows?.columnsSubrowsEnabled ?? {};
-        for(let i=0;i<toColKeys.length;i++){
-          const k = toColKeys[i];
-          if(!k) continue;
-          if(enabledMap[k] === false){
-            const colName = toSheet?.columns?.[i]?.name ?? k;
-            disabled.push(`${i+1}: ${colName}`);
-          }
-        }
-        if(disabled.length){
-          UI.toast?.error?.(`Копіювання неможливе: підстроки вимкнені у колонках ${disabled.join(', ')}`) ?? console.error('Subrows disabled in target columns', disabled);
-          return;
-        }
-
-        // Base row mapping from UI targetRow
-        const recordBase = core.buildRecordFromRow(toColKeys, targetRow);
-
-        // Build mapped lines (line #1 is base row, lines #2.. are subrows)
-        const includeBase = selectedLineIdxs.includes(1);
-        const srcSubrows = ensureArray(srcRecord?.subrows);
-
-        const mappedLines = [];
-        // line 1 (base)
-        if(includeBase){
-          mappedLines.push({ cells: { ...(recordBase?.cells ?? {}) } });
-        }
-
-        // lines 2..N+1 (subrows)
-        for(const lineIdx of selectedLineIdxs){
-          if(lineIdx <= 1) continue;
-          const srcSub = srcSubrows[lineIdx-2]; // line2 -> subrows[0]
-          if(!srcSub) continue;
-          const srcSubRow = rowArrayFromCells(srcSub?.cells ?? {}, fromColKeys);
-          const tgtSubRow = core.applyTemplateToRow(template, srcSubRow, { sourceColKeys: fromColKeys, targetColKeys: toColKeys });
-          const subRec = core.buildRecordFromRow(toColKeys, tgtSubRow);
-          mappedLines.push({ cells: { ...(subRec?.cells ?? {}) } });
-        }
-        if(scenario === 'new'){
-          // Scenario 2: copy into a NEW row in destination
-          const baseCells = includeBase ? (recordBase?.cells ?? {}) : {};
-          const subLines = includeBase ? mappedLines.slice(1) : mappedLines.slice(0);
-          const recordPartial = { ...recordBase, cells: baseCells, subrows: subLines.map(l=>({ cells: { ...(l?.cells ?? {}) } })) };
-          await tableStore.addRecord(toId, recordPartial);
-          UI.toast?.success?.('Копіювання виконано (створено нову строку у цільовому журналі)') ?? console.log('Transfer applied (new row)');
-          return;
-        }
-
-        // Scenario 1: copy into an EXISTING row in destination (select target record)
-        const labelKey = toColKeys.find(k=>k) ?? null;
-        const targetRecordId = await pickTargetRecordId({ journalId: toId, labelColKey: labelKey });
-        if(!targetRecordId) return;
-
-        const dstDataset = await tableStore.getDataset(toId);
-        const dstRecord = ensureArray(dstDataset?.records).find(r=>r?.id === targetRecordId);
-        if(!dstRecord){
-          UI.toast?.warning?.('Цільова строка не знайдена') ?? console.warn('Target record not found');
-          return;
-        }
-
-        // Determine global max filled LINE index (1=base, 2..=subrows) across ALL columns
-        const existingSubrows = ensureArray(dstRecord?.subrows);
-        const totalLines = 1 + existingSubrows.length;
-
-        let globalMaxLine = 0;
-        for(const colKey of toColKeys){
-          if(!colKey) continue;
-          let maxForCol = 0;
-
-          // base line (1)
-          const baseVal = dstRecord?.cells?.[colKey];
-          if(isFilled(baseVal)) maxForCol = 1;
-
-          // subrows lines (2..)
-          for(let i=0;i<existingSubrows.length;i++){
-            const v = existingSubrows[i]?.cells?.[colKey];
-            if(isFilled(v)) maxForCol = Math.max(maxForCol, i+2); // line index
-          }
-
-          if(maxForCol > globalMaxLine) globalMaxLine = maxForCol;
-        }
-
-        const copyLines = mappedLines; // each is {cells}
-        const K = copyLines.length;
-
-        const neededLastLine = globalMaxLine + K;
-        const neededSubrowsLen = Math.max(0, neededLastLine - 1);
-
-        // clone existing subrows
-        const nextSubrows = existingSubrows.map(s=>({ cells: { ...(s?.cells ?? {}) } }));
-        while(nextSubrows.length < neededSubrowsLen) nextSubrows.push({ cells: {} });
-
-        // clone base cells (we patch only if a copied line writes into base)
-        const nextBaseCells = { ...(dstRecord?.cells ?? {}) };
-
-        // Apply copied lines starting at (globalMaxLine + 1)
-        for(let i=0;i<K;i++){
-          const dstLine = globalMaxLine + 1 + i; // 1-based line
-          const patchCells = copyLines[i]?.cells ?? {};
-          if(dstLine <= 1){
-            // write into base
-            for(const k of Object.keys(patchCells)) nextBaseCells[k] = patchCells[k];
-          }else{
-            const si = dstLine - 2; // subrows index
-            const cur = nextSubrows[si] || { cells:{} };
-            nextSubrows[si] = { ...cur, cells: { ...(cur?.cells ?? {}), ...patchCells } };
-          }
-        }
-
-        await tableStore.updateRecord(toId, targetRecordId, {
-          cells: nextBaseCells,
-          subrows: nextSubrows
-        });
-
-        UI.toast?.success?.('Копіювання виконано (оновлено існуючу строку у цільовому журналі)') ?? console.log('Transfer applied (existing row)');
-}
-    });
+    UI.toast?.error?.('Transfer SWS недоступний: потрібен SettingsWindow') ?? console.error('Transfer SWS unavailable');
   }
 
   UI.transfer = { openSettings, openRowModal };

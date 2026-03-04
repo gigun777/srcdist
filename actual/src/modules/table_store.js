@@ -6,7 +6,9 @@ const KEYS = {
   order: (journalId) => `tableStore:order:${journalId}`,
   record: (journalId, recordId) => `tableStore:record:${journalId}:${recordId}`,
   recordPrefix: (journalId) => `tableStore:record:${journalId}:`,
-  chlog: (journalId) => `tableStore:chlog:${journalId}`
+  chlog: (journalId) => `tableStore:chlog:${journalId}`,
+  // Logical dataset key used by delta payload contracts.
+  dataset: (journalId) => String(journalId)
 };
 
 // Best-effort recovery for storages where meta/records exist but the index wasn't created (common after migrations).
